@@ -2,6 +2,8 @@ services:
   rct:
     build: .
     volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
       - ./logs:/app/logs
       - ./.env:/app/.env
     # Host IP for connecting to OBS on macOS

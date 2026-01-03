@@ -15,10 +15,15 @@ class OBSClient:
         self.client = None
 
     def is_obs_running(self):
+        if os.path.exists('/.dockerenv'):
+            # Cannot check host processes from inside Docker.
+            # We'll assume it might be running and let connection logic decide.
+            return True
+
         try:
             output = subprocess.check_output(["pgrep", "-x", "obs"])
             return len(output) > 0
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, FileNotFoundError):
             return False
 
     def launch_obs(self):
