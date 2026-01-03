@@ -1,0 +1,11 @@
+services:
+  rct:
+    build: .
+    volumes:
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    # Host IP for connecting to OBS on macOS
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OBS_WS_HOST=host.docker.internal

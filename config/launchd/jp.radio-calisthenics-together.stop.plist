@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>jp.radio-calisthenics-together.stop</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/docker</string>
+        <string>compose</string>
+        <string>run</string>
+        <string>--rm</string>
+        <string>rct</string>
+        <string>python</string>
+        <string>scripts/stop_stream.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{{REPO_DIR}}/logs/stop_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{REPO_DIR}}/logs/stop_stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>{{REPO_DIR}}</string>
+</dict>
+</plist>
