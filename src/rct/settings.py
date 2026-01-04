@@ -14,5 +14,6 @@ class Settings:
     OBS_PROFILE_NAME = os.getenv("OBS_PROFILE_NAME", None)
 
     LOG_DIR = os.getenv("LOG_DIR", "./logs")
+    YOUTUBE_PRIVACY_STATUS = os.getenv("YOUTUBE_PRIVACY_STATUS", "public")
 
 settings = Settings()

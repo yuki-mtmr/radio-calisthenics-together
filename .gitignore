@@ -21,8 +21,16 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual Environments
+venv/
+.venv/
+venv_auth/
+venv_gui/
+
 # Secrets
 .env
+config/youtube/client_secrets.json
+config/youtube/token.pickle
 
 # Docker
 .docker_node_root

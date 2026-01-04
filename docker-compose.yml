@@ -6,6 +6,7 @@ services:
       - ./scripts:/app/scripts
       - ./logs:/app/logs
       - ./.env:/app/.env
+      - ./config/youtube:/app/config/youtube
     # Host IP for connecting to OBS on macOS
     extra_hosts:
       - "host.docker.internal:host-gateway"
