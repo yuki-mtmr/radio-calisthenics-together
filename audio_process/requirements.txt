@@ -1,0 +1,9 @@
+requests
+pydub
+omegaconf
+audio-separator
+rvc-python
+numpy
+librosa
+soundfile
+ffmpeg-python
