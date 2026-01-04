@@ -6,7 +6,7 @@
     <string>jp.radio-calisthenics-together.stop</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/docker</string>
+        <string>/Applications/Docker.app/Contents/Resources/bin/docker</string>
         <string>compose</string>
         <string>run</string>
         <string>--rm</string>

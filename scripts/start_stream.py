@@ -14,12 +14,8 @@ def main():
     logger.info("--- Starting Stream Process ---")
     client = OBSClient()
 
-    if not client.launch_obs():
-        logger.error("Failed to ensure OBS is running and connected.")
-        sys.exit(1)
-
     if client.start_streaming():
-        logger.info("Start stream sequence completed successfully.")
+        logger.info("Stream started successfully.")
     else:
         logger.error("Start stream sequence failed.")
         sys.exit(1)
