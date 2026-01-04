@@ -19,7 +19,7 @@
         <key>Hour</key>
         <integer>7</integer>
         <key>Minute</key>
-        <integer>15</integer>
+        <integer>30</integer>
     </dict>
     <key>StandardOutPath</key>
     <string>{{REPO_DIR}}/logs/stop_stdout.log</string>

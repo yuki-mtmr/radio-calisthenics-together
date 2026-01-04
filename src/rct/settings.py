@@ -10,6 +10,7 @@ class Settings:
     OBS_WS_PASSWORD = os.getenv("OBS_WS_PASSWORD", "")
 
     OBS_SCENE_NAME = os.getenv("OBS_SCENE_NAME", "RADIO_TAISO_LOOP")
+    OBS_MEDIA_SOURCE_NAME = os.getenv("OBS_MEDIA_SOURCE_NAME", None)
     OBS_PROFILE_NAME = os.getenv("OBS_PROFILE_NAME", None)
 
     LOG_DIR = os.getenv("LOG_DIR", "./logs")

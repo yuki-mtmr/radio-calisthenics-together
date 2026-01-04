@@ -77,6 +77,15 @@ class OBSClient:
             logger.info(f"Setting scene to: {settings.OBS_SCENE_NAME}")
             self.client.set_current_program_scene(settings.OBS_SCENE_NAME)
 
+            # Restart Media (if configured)
+            media_source = getattr(settings, 'OBS_MEDIA_SOURCE_NAME', None)
+            if media_source:
+                logger.info(f"Restarting media source: {media_source}")
+                try:
+                    self.client.trigger_media_input_action(media_source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
+                except Exception as e:
+                    logger.warning(f"Could not restart media source: {e}")
+
             # Check if already streaming
             status = self.client.get_stream_status()
             if status.output_active:
