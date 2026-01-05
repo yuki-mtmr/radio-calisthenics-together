@@ -15,5 +15,6 @@ class Settings:
 
     LOG_DIR = os.getenv("LOG_DIR", "./logs")
     YOUTUBE_PRIVACY_STATUS = os.getenv("YOUTUBE_PRIVACY_STATUS", "public")
+    YOUTUBE_RESERVATION_BUFFER_MINUTES = int(os.getenv("YOUTUBE_RESERVATION_BUFFER_MINUTES", "2"))
 
 settings = Settings()

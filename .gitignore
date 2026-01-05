@@ -45,3 +45,11 @@ logs/*.log
 # IDEs
 .vscode/
 .idea/
+
+# Media and Data
+*.wav
+*.mp4
+video_process/output/
+video_process/background.png
+rvc_models/
+audio_process/output/

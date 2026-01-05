@@ -12,3 +12,4 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - OBS_WS_HOST=host.docker.internal
+      - TZ=Asia/Tokyo

@@ -4,6 +4,7 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from .logger import setup_logger
+from .settings import settings
 from datetime import datetime, timedelta
 
 logger = setup_logger()
@@ -41,8 +42,10 @@ class YouTubeClient:
 
     def create_broadcast(self, title, description, start_time=None, privacy_status='public'):
         if not start_time:
-            # Default to now + 2 minutes
-            start_time = (datetime.utcnow() + timedelta(minutes=2)).isoformat() + 'Z'
+            # 予約バッファ（分）後の開始を予約
+            buffer = settings.YOUTUBE_RESERVATION_BUFFER_MINUTES
+            # UTCで指定する必要があるため、utcnowを使用
+            start_time = (datetime.utcnow() + timedelta(minutes=buffer)).isoformat() + 'Z'
 
         logger.info(f"Creating YouTube Live Broadcast: {title} at {start_time} (Privacy: {privacy_status})")
 
@@ -55,10 +58,17 @@ class YouTubeClient:
             'status': {
                 'privacyStatus': privacy_status,
                 'selfDeclaredMadeForKids': False,
+            },
+            'contentDetails': {
+                'enableAutoStart': True,
+                'enableAutoStop': True,
+                'monitorStream': {
+                    'enableMonitorStream': False
+                }
             }
         }
 
-        request = self.youtube.liveBroadcasts().insert(part='snippet,status', body=body)
+        request = self.youtube.liveBroadcasts().insert(part='snippet,status,contentDetails', body=body)
         broadcast = request.execute()
         return broadcast
 

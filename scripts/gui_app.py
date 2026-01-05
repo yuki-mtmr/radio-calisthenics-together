@@ -75,11 +75,17 @@ class App(ctk.CTk):
         self.privacy_menu = ctk.CTkOptionMenu(self.settings_frame, values=["public", "unlisted", "private"], variable=self.privacy_var)
         self.privacy_menu.grid(row=2, column=1, padx=20, pady=10, sticky="w")
 
-        # 音楽ファイル名
-        ctk.CTkLabel(self.settings_frame, text="再生する音楽ソース名:", font=self.font_normal).grid(row=3, column=0, padx=20, pady=10, sticky="w")
+        # メディアソース名
+        ctk.CTkLabel(self.settings_frame, text="OBSメディアソース名:", font=self.font_normal).grid(row=3, column=0, padx=20, pady=(10, 5), sticky="w")
         self.media_entry = ctk.CTkEntry(self.settings_frame, width=250)
-        self.media_entry.insert(0, os.getenv("OBS_MEDIA_SOURCE_NAME", "radio-calisthenics.wav"))
-        self.media_entry.grid(row=3, column=1, padx=20, pady=10, sticky="w")
+        self.media_entry.insert(0, os.getenv("OBS_MEDIA_SOURCE_NAME", "radio-calisthenics_stickman.mp4"))
+        self.media_entry.grid(row=3, column=1, padx=20, pady=(10, 5), sticky="w")
+
+        # YouTube予約バッファ
+        ctk.CTkLabel(self.settings_frame, text="YouTube予約バッファ (分後):", font=self.font_normal).grid(row=4, column=0, padx=20, pady=(5, 10), sticky="w")
+        self.buffer_entry = ctk.CTkEntry(self.settings_frame, width=100)
+        self.buffer_entry.insert(0, os.getenv("YOUTUBE_RESERVATION_BUFFER_MINUTES", "2"))
+        self.buffer_entry.grid(row=4, column=1, padx=20, pady=(5, 10), sticky="w")
 
         # 保存ボタン
         self.save_btn = ctk.CTkButton(self, text="設定を保存して反映 (Macスケジュール更新)", command=self.save_settings, fg_color="#1f538d", font=self.font_normal)
@@ -106,25 +112,44 @@ class App(ctk.CTk):
         self.update_status()
 
     def load_initial_times(self):
-        try:
-            with open("config/launchd/jp.radio-calisthenics-together.start.plist", "r") as f:
-                content = f.read()
-                h = re.search(r"<key>Hour</key>\s*<integer>(\d+)</integer>", content)
-                m = re.search(r"<key>Minute</key>\s*<integer>(\d+)</integer>", content)
-                self.start_h.insert(0, h.group(1) if h else "07")
-                self.start_m.insert(0, m.group(1) if m else "00")
+        # .env から設定を読み込む補助関数
+        def get_env_val(key, default=""):
+            if os.path.exists(".env"):
+                with open(".env", "r") as f:
+                    for line in f:
+                        if line.startswith(f"{key}="):
+                            return line.split("=", 1)[1].strip()
+            return default
 
-            with open("config/launchd/jp.radio-calisthenics-together.stop.plist", "r") as f:
-                content = f.read()
-                h = re.search(r"<key>Hour</key>\s*<integer>(\d+)</integer>", content)
-                m = re.search(r"<key>Minute</key>\s*<integer>(\d+)</integer>", content)
-                self.stop_h.insert(0, h.group(1) if h else "07")
-                self.stop_m.insert(0, m.group(1) if m else "30")
-        except Exception:
-            self.start_h.insert(0, "07")
-            self.start_m.insert(0, "00")
-            self.stop_h.insert(0, "07")
-            self.stop_m.insert(0, "30")
+        try:
+            # 時刻設定 (plist)
+            if os.path.exists("config/launchd/jp.radio-calisthenics-together.start.plist"):
+                with open("config/launchd/jp.radio-calisthenics-together.start.plist", "r") as f:
+                    content = f.read()
+                    h = re.search(r"<key>Hour</key>\s*<integer>(\d+)</integer>", content)
+                    m = re.search(r"<key>Minute</key>\s*<integer>(\d+)</integer>", content)
+                    self.start_h.insert(0, h.group(1) if h else "07")
+                    self.start_m.insert(0, m.group(1) if m else "00")
+
+            if os.path.exists("config/launchd/jp.radio-calisthenics-together.stop.plist"):
+                with open("config/launchd/jp.radio-calisthenics-together.stop.plist", "r") as f:
+                    content = f.read()
+                    h = re.search(r"<key>Hour</key>\s*<integer>(\d+)</integer>", content)
+                    m = re.search(r"<key>Minute</key>\s*<integer>(\d+)</integer>", content)
+                    self.stop_h.insert(0, h.group(1) if h else "07")
+                    self.stop_m.insert(0, m.group(1) if m else "30")
+
+            # .env 設定
+            self.media_entry.delete(0, "end")
+            self.media_entry.insert(0, get_env_val("OBS_MEDIA_SOURCE_NAME", "radio-calisthenics_stickman.mp4"))
+
+            self.buffer_entry.delete(0, "end")
+            self.buffer_entry.insert(0, get_env_val("YOUTUBE_RESERVATION_BUFFER_MINUTES", "2"))
+
+            self.privacy_var.set(get_env_val("YOUTUBE_PRIVACY_STATUS", "public"))
+
+        except Exception as e:
+            print(f"Error loading initial values: {e}")
 
     def update_status(self):
         def check():
@@ -159,12 +184,17 @@ class App(ctk.CTk):
             # .env の更新
             privacy = self.privacy_var.get()
             media = self.media_entry.get()
+            buffer = self.buffer_entry.get()
 
             with open(".env", "r") as f:
                 lines = f.readlines()
 
             new_lines = []
-            keys_to_update = {"YOUTUBE_PRIVACY_STATUS": privacy, "OBS_MEDIA_SOURCE_NAME": media}
+            keys_to_update = {
+                "YOUTUBE_PRIVACY_STATUS": privacy,
+                "OBS_MEDIA_SOURCE_NAME": media,
+                "YOUTUBE_RESERVATION_BUFFER_MINUTES": buffer
+            }
             found_keys = set()
 
             for line in lines:

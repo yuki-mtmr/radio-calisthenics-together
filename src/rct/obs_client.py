@@ -35,11 +35,15 @@ class OBSClient:
 
             # Reset media if specified
             if settings.OBS_MEDIA_SOURCE_NAME:
-                logger.info(f"Restarting media: {settings.OBS_MEDIA_SOURCE_NAME}")
+                logger.info(f"Attempting to restart media source: '{settings.OBS_MEDIA_SOURCE_NAME}'")
                 try:
                     self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
+                    logger.info("Media source restart command sent.")
                 except Exception as e:
-                    logger.warning(f"Media restart failed: {e}")
+                    logger.warning(f"Media restart failed for source '{settings.OBS_MEDIA_SOURCE_NAME}': {e}")
+                    logger.warning("Please ensure this matches the 'Source Name' in OBS.")
+            else:
+                logger.info("No media source specified for restart.")
 
             status = self.client.get_stream_status()
             if status.output_active:
