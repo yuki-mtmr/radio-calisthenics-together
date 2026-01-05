@@ -17,9 +17,9 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>7</integer>
+        <integer>6</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>59</integer>
     </dict>
     <key>StandardOutPath</key>
     <string>{{REPO_DIR}}/logs/start_stdout.log</string>

@@ -69,31 +69,36 @@ class App(ctk.CTk):
         self.stop_m = ctk.CTkEntry(time_inner_frame2, width=50)
         self.stop_m.pack(side="left")
 
-        # プライバシー設定
-        ctk.CTkLabel(self.settings_frame, text="YouTube配信設定:", font=self.font_normal).grid(row=2, column=0, padx=20, pady=10, sticky="w")
-        self.privacy_var = ctk.StringVar(value=os.getenv("YOUTUBE_PRIVACY_STATUS", "public"))
-        self.privacy_menu = ctk.CTkOptionMenu(self.settings_frame, values=["public", "unlisted", "private"], variable=self.privacy_var)
-        self.privacy_menu.grid(row=2, column=1, padx=20, pady=10, sticky="w")
+        # システム内部の待機設定
+        ctk.CTkLabel(self.settings_frame, text="システムの起動待機 (秒):", font=self.font_normal).grid(row=2, column=0, padx=20, pady=(10, 0), sticky="w")
+        self.buffer_entry = ctk.CTkEntry(self.settings_frame, width=100)
+        self.buffer_entry.insert(0, os.getenv("YOUTUBE_RESERVATION_BUFFER_MINUTES", "60"))
+        self.buffer_entry.grid(row=2, column=1, padx=20, pady=(10, 0), sticky="w")
+        ctk.CTkLabel(self.settings_frame, text="※OBS接続を安定させるための内部的な待機時間です", font=ctk.CTkFont(size=10), text_color="gray").grid(row=3, column=0, columnspan=2, padx=20, pady=(0, 10), sticky="w")
 
         # メディアソース名
-        ctk.CTkLabel(self.settings_frame, text="OBSメディアソース名:", font=self.font_normal).grid(row=3, column=0, padx=20, pady=(10, 5), sticky="w")
+        ctk.CTkLabel(self.settings_frame, text="OBSメディアソース名:", font=self.font_normal).grid(row=4, column=0, padx=20, pady=10, sticky="w")
         self.media_entry = ctk.CTkEntry(self.settings_frame, width=250)
         self.media_entry.insert(0, os.getenv("OBS_MEDIA_SOURCE_NAME", "radio-calisthenics_stickman.mp4"))
-        self.media_entry.grid(row=3, column=1, padx=20, pady=(10, 5), sticky="w")
+        self.media_entry.grid(row=4, column=1, padx=20, pady=10, sticky="w")
 
-        # YouTube予約バッファ
-        ctk.CTkLabel(self.settings_frame, text="YouTube予約バッファ (分後):", font=self.font_normal).grid(row=4, column=0, padx=20, pady=(5, 10), sticky="w")
-        self.buffer_entry = ctk.CTkEntry(self.settings_frame, width=100)
-        self.buffer_entry.insert(0, os.getenv("YOUTUBE_RESERVATION_BUFFER_MINUTES", "2"))
-        self.buffer_entry.grid(row=4, column=1, padx=20, pady=(5, 10), sticky="w")
+        # プライバシー設定
+        ctk.CTkLabel(self.settings_frame, text="YouTube公開設定:", font=self.font_normal).grid(row=5, column=0, padx=20, pady=10, sticky="w")
+        self.privacy_var = ctk.StringVar(value=os.getenv("YOUTUBE_PRIVACY_STATUS", "public"))
+        self.privacy_menu = ctk.CTkOptionMenu(self.settings_frame, values=["public", "unlisted", "private"], variable=self.privacy_var)
+        self.privacy_menu.grid(row=5, column=1, padx=20, pady=10, sticky="w")
 
         # 保存ボタン
         self.save_btn = ctk.CTkButton(self, text="設定を保存して反映 (Macスケジュール更新)", command=self.save_settings, fg_color="#1f538d", font=self.font_normal)
-        self.save_btn.grid(row=3, column=0, padx=20, pady=10)
+        self.save_btn.grid(row=3, column=0, padx=20, pady=20)
+
+        # 予約のヒント
+        hint_text = "【ヒント】7:00開始に設定すると、Macは自動的に6:59に起動して準備を始めます。"
+        ctk.CTkLabel(self, text=hint_text, font=ctk.CTkFont(size=11), text_color="#1f538d").grid(row=4, column=0, padx=20, pady=(0, 10))
 
         # 手動操作ボタン
         self.actions_frame = ctk.CTkFrame(self)
-        self.actions_frame.grid(row=4, column=0, padx=20, pady=10, sticky="nsew")
+        self.actions_frame.grid(row=5, column=0, padx=20, pady=10, sticky="nsew")
 
         self.start_btn = ctk.CTkButton(self.actions_frame, text="今すぐ配信開始", command=self.manual_start, fg_color="green", hover_color="#228B22", font=self.font_normal)
         self.start_btn.pack(side="left", padx=20, pady=20, expand=True)
@@ -103,7 +108,7 @@ class App(ctk.CTk):
 
         # ログコンソール
         self.console = ctk.CTkTextbox(self, height=200, font=ctk.CTkFont(family="Courier", size=12))
-        self.console.grid(row=5, column=0, padx=20, pady=20, sticky="nsew")
+        self.console.grid(row=6, column=0, padx=20, pady=20, sticky="nsew")
 
         # 初期値読み込み
         self.load_initial_times()
@@ -148,6 +153,16 @@ class App(ctk.CTk):
 
             self.privacy_var.set(get_env_val("YOUTUBE_PRIVACY_STATUS", "public"))
 
+            # start/stop_h/m が空の場合は .env から補完
+            if not self.start_h.get():
+                st = get_env_val("STREAM_START_TIME", "07:00").split(":")
+                self.start_h.insert(0, st[0])
+                self.start_m.insert(0, st[1])
+            if not self.stop_h.get():
+                et = get_env_val("STREAM_STOP_TIME", "07:05").split(":")
+                self.stop_h.insert(0, et[0])
+                self.stop_m.insert(0, et[1])
+
         except Exception as e:
             print(f"Error loading initial values: {e}")
 
@@ -185,6 +200,8 @@ class App(ctk.CTk):
             privacy = self.privacy_var.get()
             media = self.media_entry.get()
             buffer = self.buffer_entry.get()
+            start_time = f"{self.start_h.get().zfill(2)}:{self.start_m.get().zfill(2)}"
+            stop_time = f"{self.stop_h.get().zfill(2)}:{self.stop_m.get().zfill(2)}"
 
             with open(".env", "r") as f:
                 lines = f.readlines()
@@ -193,7 +210,9 @@ class App(ctk.CTk):
             keys_to_update = {
                 "YOUTUBE_PRIVACY_STATUS": privacy,
                 "OBS_MEDIA_SOURCE_NAME": media,
-                "YOUTUBE_RESERVATION_BUFFER_MINUTES": buffer
+                "YOUTUBE_RESERVATION_BUFFER_MINUTES": buffer,
+                "STREAM_START_TIME": start_time,
+                "STREAM_STOP_TIME": stop_time
             }
             found_keys = set()
 
@@ -210,15 +229,28 @@ class App(ctk.CTk):
             with open(".env", "w") as f:
                 f.writelines(new_lines)
 
-            # plist の更新
-            self.update_plist("config/launchd/jp.radio-calisthenics-together.start.plist", self.start_h.get(), self.start_m.get())
+            # plist の更新 (Macの起動時刻は、配信開始の1分前に自動設定)
+            try:
+                h = int(self.start_h.get())
+                m = int(self.start_m.get())
+                # 1分戻す
+                if m == 0:
+                    launch_h = (h - 1) % 24
+                    launch_m = 59
+                else:
+                    launch_h = h
+                    launch_m = m - 1
+            except:
+                launch_h, launch_m = 6, 59
+
+            self.update_plist("config/launchd/jp.radio-calisthenics-together.start.plist", launch_h, launch_m)
             self.update_plist("config/launchd/jp.radio-calisthenics-together.stop.plist", self.stop_h.get(), self.stop_m.get())
 
             # install_launchd.sh の実行
             subprocess.run(["./scripts/install_launchd.sh"], check=True)
 
-            self.log(f"保存完了: 開始 {self.start_h.get()}:{self.start_m.get()}, 終了 {self.stop_h.get()}:{self.stop_m.get()}")
-            self.log("Macのスケジュール設定を更新しました。")
+            self.log(f"保存完了: YouTube予約 {start_time}, システム起動 {launch_h:02d}:{launch_m:02d}")
+            self.log("Macのスケジュールを更新しました（配信の1分前に起動します）。")
         except Exception as e:
             self.log(f"保存エラー: {e}")
 

@@ -17,18 +17,35 @@ def main():
     logger.info("--- Starting Phase 2 Live Process ---")
 
     try:
-        # 1. YouTube Live 枠の作成
+        # 1. YouTube Live 枠の作成 または 既存枠の検索
         yt = YouTubeClient()
-        now_str = datetime.now().strftime('%Y/%m/%d %H:%M')
-        title = f"みんなでラジオ体操 ({now_str})"
-        description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"
+        now = datetime.now()
+        now_date_str = now.strftime('%Y/%m/%d')
+        target_title = f"みんなでラジオ体操 ({now_date_str}" # 部分一致で検索
 
-        broadcast = yt.create_broadcast(title, description, privacy_status=settings.YOUTUBE_PRIVACY_STATUS)
-        stream = yt.create_stream(f"Stream {now_str}")
+        upcoming = yt.list_upcoming_broadcasts()
+        broadcast = None
+        for item in upcoming:
+            if target_title in item['snippet']['title']:
+                broadcast = item
+                logger.info(f"Found existing upcoming broadcast: {broadcast['snippet']['title']}")
+                break
+
+        if not broadcast:
+            now_dt = datetime.now()
+            title = f"みんなでラジオ体操 ({now_dt.strftime('%Y/%m/%d %H:%M')})"
+            description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"
+
+            # 1分後の開始として枠を作成
+            start_iso = (datetime.utcnow() + timedelta(minutes=1)).isoformat() + 'Z'
+            broadcast = yt.create_broadcast(title, description, start_time_iso=start_iso, privacy_status=settings.YOUTUBE_PRIVACY_STATUS)
+            logger.info(f"New YouTube Broadcast created. ID: {broadcast['id']}")
+
+        # ストリームは毎回作成してバインド（既存ストリームの再利用が難しいため）
+        stream = yt.create_stream(f"Stream {now.strftime('%H:%M:%S')}")
         yt.bind_broadcast(broadcast['id'], stream['id'])
 
         stream_key = stream['cdn']['ingestionInfo']['streamName']
-        logger.info(f"YouTube Broadcast created. ID: {broadcast['id']}")
 
         # 2. OBS の制御
         obs = OBSClient()

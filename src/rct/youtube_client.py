@@ -40,20 +40,18 @@ class YouTubeClient:
 
         return build('youtube', 'v3', credentials=creds)
 
-    def create_broadcast(self, title, description, start_time=None, privacy_status='public'):
-        if not start_time:
-            # 予約バッファ（分）後の開始を予約
-            buffer = settings.YOUTUBE_RESERVATION_BUFFER_MINUTES
-            # UTCで指定する必要があるため、utcnowを使用
-            start_time = (datetime.utcnow() + timedelta(minutes=buffer)).isoformat() + 'Z'
-
-        logger.info(f"Creating YouTube Live Broadcast: {title} at {start_time} (Privacy: {privacy_status})")
+    def create_broadcast(self, title, description, start_time_iso, privacy_status='public'):
+        """
+        YouTube Live 枠を作成します。
+        start_time_iso: UTC (ISO 8601) format string.
+        """
+        logger.info(f"Creating YouTube Live Broadcast: {title} at {start_time_iso} (Privacy: {privacy_status})")
 
         body = {
             'snippet': {
                 'title': title,
                 'description': description,
-                'scheduledStartTime': start_time,
+                'scheduledStartTime': start_time_iso,
             },
             'status': {
                 'privacyStatus': privacy_status,
@@ -96,3 +94,24 @@ class YouTubeClient:
             streamId=stream_id
         )
         return request.execute()
+
+    def list_upcoming_broadcasts(self):
+        request = self.youtube.liveBroadcasts().list(
+            part='snippet,status',
+            broadcastStatus='upcoming',
+            maxResults=20
+        )
+        response = request.execute()
+        return response.get('items', [])
+
+    def delete_broadcast(self, broadcast_id):
+        logger.info(f"Deleting broadcast: {broadcast_id}")
+        self.youtube.liveBroadcasts().delete(id=broadcast_id).execute()
+
+    def find_broadcast_by_date(self, date_str):
+        """タイトルに指定した日付が含まれる待機中の枠を探します"""
+        upcoming = self.list_upcoming_broadcasts()
+        for item in upcoming:
+            if date_str in item['snippet']['title']:
+                return item
+        return None
