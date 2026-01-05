@@ -57,6 +57,16 @@ class OBSClient:
             logger.error(f"Start stream error: {e}")
             return False
 
+    def set_scene(self, scene_name):
+        if not self.connect():
+            return False
+        try:
+            self.client.set_current_program_scene(scene_name)
+            return True
+        except Exception as e:
+            logger.error(f"Set scene error: {e}")
+            return False
+
     def stop_streaming(self):
         if not self.connect():
             return False
