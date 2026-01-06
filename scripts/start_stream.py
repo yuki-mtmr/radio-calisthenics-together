@@ -9,7 +9,8 @@ from rct.obs_client import OBSClient
 from rct.youtube_client import YouTubeClient
 from rct.settings import settings
 from rct.logger import setup_logger
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 logger = setup_logger()
 
@@ -65,6 +66,19 @@ def main():
         except Exception as e:
             logger.warning(f"Could not update OBS Stream Key automatically: {e}")
             logger.warning("Please ensure OBS is set to 'Custom' or 'YouTube - RTMP' with stream key usage.")
+
+        # --- 開始時刻まで待機 (ちょうどに始めるための調整) ---
+        try:
+            target_h, target_m = settings.STREAM_START_TIME.split(':')
+            target_dt = datetime.now().replace(hour=int(target_h), minute=int(target_m), second=0, microsecond=0)
+
+            # もし現在時刻がターゲットより前なら、その差分だけ待つ
+            wait_seconds = (target_dt - datetime.now()).total_seconds()
+            if wait_seconds > 0:
+                logger.info(f"Waiting {wait_seconds:.1f} seconds to start exactly at {settings.STREAM_START_TIME}...")
+                time.sleep(wait_seconds)
+        except Exception as e:
+            logger.warning(f"Wait logic skipped due to error: {e}")
 
         if obs.start_streaming():
             logger.info("Phase 2 automation completed successfully.")
