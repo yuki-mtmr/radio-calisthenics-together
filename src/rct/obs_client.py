@@ -33,15 +33,19 @@ class OBSClient:
             logger.info(f"Preparing scene: {settings.OBS_SCENE_NAME}")
             self.client.set_current_program_scene(settings.OBS_SCENE_NAME)
 
-            # Reset media if specified
+            # 動画ソースのリセット（上書き対策）
             if settings.OBS_MEDIA_SOURCE_NAME:
-                logger.info(f"Attempting to restart media source: '{settings.OBS_MEDIA_SOURCE_NAME}'")
+                logger.info(f"Force refreshing media source: '{settings.OBS_MEDIA_SOURCE_NAME}'")
                 try:
+                    # 1. 一旦非表示にして描画を止める
+                    self.client.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, False)
+                    time.sleep(0.5)
+                    # 2. 再送を開始し、再読み込みさせる
                     self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
-                    logger.info("Media source restart command sent.")
+                    self.client.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
+                    logger.info("Media source refreshed and restarted.")
                 except Exception as e:
-                    logger.warning(f"Media restart failed for source '{settings.OBS_MEDIA_SOURCE_NAME}': {e}")
-                    logger.warning("Please ensure this matches the 'Source Name' in OBS.")
+                    logger.warning(f"Media refresh failed: {e}")
             else:
                 logger.info("No media source specified for restart.")
 
