@@ -73,12 +73,25 @@ def main():
             target_dt = datetime.now().replace(hour=int(target_h), minute=int(target_m), second=0, microsecond=0)
 
             # もし現在時刻がターゲットより前なら、その差分だけ待つ
-            wait_seconds = (target_dt - datetime.now()).total_seconds()
+            # YouTube側のラグを考慮し、10秒早めにOBSの配信を開始する
+            wait_seconds = (target_dt - datetime.now()).total_seconds() - 10
             if wait_seconds > 0:
-                logger.info(f"Waiting {wait_seconds:.1f} seconds to start exactly at {settings.STREAM_START_TIME}...")
+                logger.info(f"Waiting {wait_seconds:.1f} seconds to start a bit early (10s buffer)...")
                 time.sleep(wait_seconds)
+            else:
+                 logger.info("Skipping wait (already past target start time minus 10s).")
+
         except Exception as e:
             logger.warning(f"Wait logic skipped due to error: {e}")
+
+        # 明示的にシーンアイテムを表示状態にする（自動再生されない問題への対策）
+        # start_streaming内でもリフレッシュは行うが、念のためここでも確認
+        obs.connect() # 接続確保
+        if settings.OBS_MEDIA_SOURCE_NAME:
+            try:
+                obs.client.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
+            except Exception as e:
+                logger.warning(f"Failed to ensure media source visibility: {e}")
 
         if obs.start_streaming():
             logger.info("Phase 2 automation completed successfully.")
