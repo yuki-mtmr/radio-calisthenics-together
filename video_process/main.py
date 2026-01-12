@@ -153,13 +153,25 @@ def main():
     # 1. トレース動画の作成（背景あり、センタリング）
     temp_video = tracer.process_video(input_video)
 
-    # 2. 音声合成
-    if os.path.exists(converted_audio):
-        tracer.combine_with_audio(temp_video, converted_audio, output_final)
-        print(f"Finished! File saved to: {output_final}")
-    else:
-        print(f"Warning: Audio file not found. Outputting video only.")
-        shutil.copy(temp_video, output_final)
+    # 2. 音声合成 (一旦一時ファイルに書き出してから移動することで、上書き中の真っ黒画面を防ぐ)
+    output_temp = output_final + ".tmp.mp4"
+    try:
+        if os.path.exists(converted_audio):
+            tracer.combine_with_audio(temp_video, converted_audio, output_temp)
+            print("Combining with audio successful.")
+        else:
+            print(f"Warning: Audio file not found. Outputting video only.")
+            shutil.copy(temp_video, output_temp)
+
+        # アトミックに置換
+        if os.path.exists(output_temp):
+            shutil.move(output_temp, output_final)
+            print(f"Finished! File saved to: {output_final}")
+    except Exception as e:
+        print(f"Error during final output creation: {e}")
+        if os.path.exists(output_temp):
+            os.remove(output_temp)
+        raise e
 
 if __name__ == "__main__":
     main()

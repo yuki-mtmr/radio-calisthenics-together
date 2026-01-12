@@ -38,11 +38,11 @@ class OBSClient:
                 logger.info(f"Force refreshing media source: '{settings.OBS_MEDIA_SOURCE_NAME}'")
                 try:
                     # 1. 一旦非表示にして描画を止める
-                    self.client.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, False)
+                    self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, False)
                     time.sleep(0.5)
                     # 2. 再送を開始し、再読み込みさせる
                     self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
-                    self.client.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
+                    self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
                     logger.info("Media source refreshed and restarted.")
                 except Exception as e:
                     logger.warning(f"Media refresh failed: {e}")
@@ -70,6 +70,18 @@ class OBSClient:
         except Exception as e:
             logger.error(f"Set scene error: {e}")
             return False
+
+    def set_scene_item_enabled(self, scene_name, source_name, enabled):
+        if not self.connect():
+            return False
+        try:
+            resp = self.client.get_scene_item_id(scene_name, source_name)
+            scene_item_id = resp.scene_item_id
+            self.client.set_scene_item_enabled(scene_name, scene_item_id, enabled)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to set scene item enabled ({source_name}): {e}")
+            raise e
 
     def stop_streaming(self):
         if not self.connect():

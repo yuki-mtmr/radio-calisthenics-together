@@ -89,7 +89,7 @@ def main():
         obs.connect() # 接続確保
         if settings.OBS_MEDIA_SOURCE_NAME:
             try:
-                obs.client.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
+                obs.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
             except Exception as e:
                 logger.warning(f"Failed to ensure media source visibility: {e}")
 
