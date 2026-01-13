@@ -233,24 +233,33 @@ class App(ctk.CTk):
             try:
                 h = int(self.start_h.get())
                 m = int(self.start_m.get())
-                # 1分戻す
-                if m == 0:
-                    launch_h = (h - 1) % 24
-                    launch_m = 59
-                else:
-                    launch_h = h
-                    launch_m = m - 1
+
+                # 1. 配信開始の1分前（既存）
+                start_mins = h * 60 + m
+                launch_mins = (start_mins - 1) % 1440
+                launch_h = launch_mins // 60
+                launch_m = launch_mins % 60
+
+                # 2. 準備開始の10分前（新規）
+                prepare_mins = (start_mins - 10) % 1440
+                prepare_h = prepare_mins // 60
+                prepare_m = prepare_mins % 60
+
             except:
                 launch_h, launch_m = 6, 59
+                prepare_h, prepare_m = 6, 50
 
             self.update_plist("config/launchd/jp.radio-calisthenics-together.start.plist", launch_h, launch_m)
             self.update_plist("config/launchd/jp.radio-calisthenics-together.stop.plist", self.stop_h.get(), self.stop_m.get())
 
+            if os.path.exists("config/launchd/jp.radio-calisthenics-together.prepare.plist"):
+                self.update_plist("config/launchd/jp.radio-calisthenics-together.prepare.plist", prepare_h, prepare_m)
+
             # install_launchd.sh の実行
             subprocess.run(["./scripts/install_launchd.sh"], check=True)
 
-            self.log(f"保存完了: YouTube予約 {start_time}, システム起動 {launch_h:02d}:{launch_m:02d}")
-            self.log("Macのスケジュールを更新しました（配信の1分前に起動します）。")
+            self.log(f"保存完了: YouTube予約 {start_time}")
+            self.log(f"スケジュール更新: 準備開始 {prepare_h:02d}:{prepare_m:02d}, 配信処理開始 {launch_h:02d}:{launch_m:02d}")
         except Exception as e:
             self.log(f"保存エラー: {e}")
 
