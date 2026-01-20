@@ -11,6 +11,7 @@ from rct.settings import settings
 from rct.logger import setup_logger
 from datetime import datetime, timedelta
 import time
+from rct.notify import send_alert_email
 
 logger = setup_logger()
 
@@ -101,6 +102,7 @@ def main():
 
     except Exception as e:
         logger.error(f"Phase 2 error: {e}")
+        send_alert_email("Broadcast Start Failed", f"An error occurred during Phase 2 auto-start:\n\n{e}")
         sys.exit(1)
 
 if __name__ == "__main__":

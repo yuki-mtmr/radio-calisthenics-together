@@ -19,4 +19,8 @@ class Settings:
     STREAM_START_TIME = os.getenv("STREAM_START_TIME", "07:00")
     STREAM_STOP_TIME = os.getenv("STREAM_STOP_TIME", "07:05")
 
+    ALERT_EMAIL_SENDER = os.getenv("ALERT_EMAIL_SENDER", "")
+    ALERT_EMAIL_PASSWORD = os.getenv("ALERT_EMAIL_PASSWORD", "")
+    ALERT_EMAIL_RECEIVER = os.getenv("ALERT_EMAIL_RECEIVER", "")
+
 settings = Settings()
