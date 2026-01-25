@@ -5,9 +5,41 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from .logger import setup_logger
 from .settings import settings
+from .notify import send_alert_email
 from datetime import datetime, timedelta
 
 logger = setup_logger()
+
+# トークン期限切れ警告の閾値（日数）
+TOKEN_EXPIRY_WARNING_DAYS = 7
+
+
+def check_token_expiry(creds):
+    """
+    トークンの有効期限をチェックし、期限が近い場合は警告メールを送信する。
+
+    Args:
+        creds: Google認証クレデンシャル
+    """
+    if not creds or not creds.expiry:
+        return
+
+    days_until_expiry = (creds.expiry - datetime.utcnow()).days
+
+    if days_until_expiry < TOKEN_EXPIRY_WARNING_DAYS:
+        logger.warning(f"YouTube token expires in {days_until_expiry} days")
+        try:
+            send_alert_email(
+                "Token Expiry Warning",
+                f"YouTubeトークンが{days_until_expiry}日後に期限切れになります。\n\n"
+                f"期限: {creds.expiry.strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+                "以下のコマンドで再認証してください:\n"
+                "cd /Users/yukimatsumori/projects/radio-calisthenics-together\n"
+                "rm config/youtube/token.pickle\n"
+                "./venv_gui/bin/python scripts/start_stream.py"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send token expiry warning: {e}")
 
 SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 
@@ -25,8 +57,12 @@ class YouTubeClient:
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    logger.error(f"Token refresh failed: {e}")
+                    creds = None  # 新規認証へフォールバック
+            if not creds or not creds.valid:
                 if not os.path.exists(self.credentials_path):
                     logger.error(f"Credentials file not found at {self.credentials_path}")
                     raise FileNotFoundError(f"Please place your client_secrets.json in {self.credentials_path}")
@@ -37,6 +73,9 @@ class YouTubeClient:
 
             with open(self.token_path, 'wb') as token:
                 pickle.dump(creds, token)
+
+        # トークン期限切れ警告チェック
+        check_token_expiry(creds)
 
         return build('youtube', 'v3', credentials=creds)
 

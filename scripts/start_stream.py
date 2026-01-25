@@ -102,7 +102,10 @@ def main():
 
     except Exception as e:
         logger.error(f"Phase 2 error: {e}")
-        send_alert_email("Broadcast Start Failed", f"An error occurred during Phase 2 auto-start:\n\n{e}")
+        try:
+            send_alert_email("Broadcast Start Failed", f"An error occurred during Phase 2 auto-start:\n\n{e}")
+        except Exception as email_err:
+            logger.error(f"Email notification failed: {email_err}")
         sys.exit(1)
 
 if __name__ == "__main__":
