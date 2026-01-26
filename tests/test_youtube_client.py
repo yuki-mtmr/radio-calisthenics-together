@@ -11,13 +11,12 @@ def mock_youtube_client():
         # Mocking open(token.pickle) and os.path.exists
         with patch('os.path.exists', return_value=True):
             with patch('builtins.open', MagicMock()):
-                # 有効期限を30日後に設定（警告が出ないように）
+                # 有効期限を30日後に設定
                 mock_creds = MagicMock()
                 mock_creds.expiry = datetime.utcnow() + timedelta(days=30)
                 with patch('pickle.load', return_value=mock_creds):
-                    with patch('rct.youtube_client.check_token_expiry'):
-                        client = YouTubeClient()
-                        yield client
+                    client = YouTubeClient()
+                    yield client
 
 def test_find_broadcast_by_date(mock_youtube_client):
     # Setup mock return for liveBroadcasts().list().execute()
@@ -74,7 +73,7 @@ def test_token_refresh_failure_triggers_new_auth():
          patch('pickle.load', return_value=expired_creds), \
          patch('pickle.dump') as mock_dump, \
          patch('rct.youtube_client.InstalledAppFlow') as mock_flow, \
-         patch('rct.youtube_client.check_token_expiry'):
+         patch('rct.youtube_client.send_alert_email'):
 
         # client_secrets.jsonは存在する
         mock_exists.side_effect = lambda path: True
@@ -93,53 +92,63 @@ def test_token_refresh_failure_triggers_new_auth():
         mock_dump.assert_called()
 
 
-def test_token_expiry_warning_sent_when_expiring_soon():
-    """トークンが7日以内に期限切れになる場合、警告メールが送信されることを確認"""
-    from rct.youtube_client import check_token_expiry
+def test_token_refresh_success_no_email():
+    """トークンリフレッシュ成功時は警告メールが送信されないことを確認"""
+    # 期限切れだがリフレッシュ可能なモッククレデンシャル
+    expired_creds = MagicMock()
+    expired_creds.valid = False
+    expired_creds.expired = True
+    expired_creds.refresh_token = 'some_refresh_token'
+    # refresh()成功後のcredsをシミュレート
+    def refresh_side_effect(request):
+        expired_creds.valid = True
+        expired_creds.expiry = datetime.utcnow() + timedelta(hours=1)
+    expired_creds.refresh.side_effect = refresh_side_effect
 
-    # 5日後に期限切れになるクレデンシャル
-    expiring_creds = MagicMock()
-    expiring_creds.expiry = datetime.utcnow() + timedelta(days=5)
+    with patch('rct.youtube_client.build') as mock_build, \
+         patch('os.path.exists', return_value=True), \
+         patch('builtins.open', mock_open()), \
+         patch('pickle.load', return_value=expired_creds), \
+         patch('pickle.dump'), \
+         patch('rct.youtube_client.send_alert_email') as mock_send_email:
 
-    with patch('rct.youtube_client.send_alert_email') as mock_send_email, \
-         patch('rct.youtube_client.logger') as mock_logger:
+        # YouTubeClientを初期化
+        client = YouTubeClient()
 
-        check_token_expiry(expiring_creds)
+        # 警告メールは送信されないことを確認
+        mock_send_email.assert_not_called()
+
+
+def test_token_refresh_failure_sends_alert_email():
+    """トークンリフレッシュ失敗時に警告メールが送信されることを確認"""
+    # 期限切れでリフレッシュ失敗するモッククレデンシャル
+    expired_creds = MagicMock()
+    expired_creds.valid = False
+    expired_creds.expired = True
+    expired_creds.refresh_token = 'some_refresh_token'
+    expired_creds.refresh.side_effect = RefreshError("Token has been expired or revoked.")
+
+    # 新規認証用のモッククレデンシャル
+    new_creds = MagicMock()
+    new_creds.valid = True
+    new_creds.expiry = datetime.utcnow() + timedelta(days=30)
+
+    with patch('rct.youtube_client.build') as mock_build, \
+         patch('os.path.exists', return_value=True), \
+         patch('builtins.open', mock_open()), \
+         patch('pickle.load', return_value=expired_creds), \
+         patch('pickle.dump'), \
+         patch('rct.youtube_client.InstalledAppFlow') as mock_flow, \
+         patch('rct.youtube_client.send_alert_email') as mock_send_email:
+
+        # 新規認証フローが新しいcredsを返す
+        mock_flow.from_client_secrets_file.return_value.run_local_server.return_value = new_creds
+
+        # YouTubeClientを初期化
+        client = YouTubeClient()
 
         # 警告メールが送信されたことを確認
         mock_send_email.assert_called_once()
         call_args = mock_send_email.call_args
-        assert "Token Expiry Warning" in call_args[0][0]
-
-
-def test_token_expiry_warning_not_sent_when_not_expiring_soon():
-    """トークンが7日以上有効な場合、警告メールは送信されないことを確認"""
-    from rct.youtube_client import check_token_expiry
-
-    # 30日後に期限切れになるクレデンシャル
-    valid_creds = MagicMock()
-    valid_creds.expiry = datetime.utcnow() + timedelta(days=30)
-
-    with patch('rct.youtube_client.send_alert_email') as mock_send_email:
-
-        check_token_expiry(valid_creds)
-
-        # 警告メールは送信されないことを確認
-        mock_send_email.assert_not_called()
-
-
-def test_token_expiry_warning_handles_no_expiry():
-    """トークンにexpiry情報がない場合でもエラーにならないことを確認"""
-    from rct.youtube_client import check_token_expiry
-
-    # expiry属性がNoneのクレデンシャル
-    creds_no_expiry = MagicMock()
-    creds_no_expiry.expiry = None
-
-    with patch('rct.youtube_client.send_alert_email') as mock_send_email:
-
-        # エラーなく完了することを確認
-        check_token_expiry(creds_no_expiry)
-
-        # 警告メールは送信されないことを確認
-        mock_send_email.assert_not_called()
+        assert "Token Refresh Failed" in call_args[0][0]
+        assert "再認証" in call_args[0][1]
