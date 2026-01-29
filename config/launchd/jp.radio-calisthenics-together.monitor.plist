@@ -6,7 +6,7 @@
     <string>jp.radio-calisthenics-together.monitor</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>{{REPO_DIR}}/.venv/bin/python3</string>
         <string>scripts/health_monitor.py</string>
     </array>
     <key>StartCalendarInterval</key>

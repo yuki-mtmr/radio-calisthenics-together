@@ -45,6 +45,27 @@ def is_app_running(app_name):
         return False
 
 
+def is_docker_running():
+    """
+    Dockerデーモンが起動中か確認
+
+    docker infoコマンドで確認する。pgrep -x Dockerは不正確
+    （Docker Desktopのプロセス名は「com.docker.backend」等のため）
+
+    Returns:
+        bool: Dockerが応答可能ならTrue
+    """
+    try:
+        subprocess.check_call(
+            ["docker", "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 def open_app(app_name):
     """
     アプリを起動
@@ -91,13 +112,10 @@ def start_docker_with_retry():
     Returns:
         bool: Docker起動成功ならTrue、失敗ならFalse
     """
-    # 既に起動している場合
-    if is_app_running("Docker"):
+    # 既に起動している場合（docker infoで確認）
+    if is_docker_running():
         log("Docker is already running.")
-        if wait_for_docker():
-            return True
-        log("Docker process is running but not responding.")
-        # 応答しない場合はリトライへ
+        return True
 
     # 最大3回試行
     max_attempts = 3

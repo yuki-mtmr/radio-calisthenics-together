@@ -28,7 +28,7 @@ class TestIsAppRunning:
 
             mock_check_call.return_value = 0
 
-            result = prepare_environment.is_app_running("Docker")
+            result = prepare_environment.is_app_running("OBS")
 
             assert result is True
 
@@ -41,7 +41,54 @@ class TestIsAppRunning:
 
             mock_check_call.side_effect = subprocess.CalledProcessError(1, "pgrep")
 
-            result = prepare_environment.is_app_running("Docker")
+            result = prepare_environment.is_app_running("OBS")
+
+            assert result is False
+
+
+class TestIsDockerRunning:
+    """is_docker_running 関数のテスト（Docker専用のチェック）"""
+
+    def test_docker_running_when_docker_info_succeeds(self):
+        """docker infoが成功する場合、Trueを返すことをテスト"""
+        with patch('subprocess.check_call') as mock_check_call:
+            import importlib
+            import prepare_environment
+            importlib.reload(prepare_environment)
+
+            mock_check_call.return_value = 0
+
+            result = prepare_environment.is_docker_running()
+
+            assert result is True
+            # docker infoコマンドが呼ばれていることを確認
+            mock_check_call.assert_called_once()
+            call_args = mock_check_call.call_args[0][0]
+            assert call_args == ["docker", "info"]
+
+    def test_docker_not_running_when_docker_info_fails(self):
+        """docker infoが失敗する場合、Falseを返すことをテスト"""
+        with patch('subprocess.check_call') as mock_check_call:
+            import importlib
+            import prepare_environment
+            importlib.reload(prepare_environment)
+
+            mock_check_call.side_effect = subprocess.CalledProcessError(1, "docker")
+
+            result = prepare_environment.is_docker_running()
+
+            assert result is False
+
+    def test_docker_not_running_when_docker_not_found(self):
+        """dockerコマンドが見つからない場合、Falseを返すことをテスト"""
+        with patch('subprocess.check_call') as mock_check_call:
+            import importlib
+            import prepare_environment
+            importlib.reload(prepare_environment)
+
+            mock_check_call.side_effect = FileNotFoundError()
+
+            result = prepare_environment.is_docker_running()
 
             assert result is False
 
@@ -122,17 +169,17 @@ class TestStartDockerWithRetry:
         with patch('prepare_environment.send_alert_email') as mock_notify, \
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
              patch('time.sleep') as mock_sleep:
 
-            mock_is_running.return_value = True
-            mock_wait.return_value = True
+            mock_is_docker.return_value = True
 
             import prepare_environment
             result = prepare_environment.start_docker_with_retry()
 
             assert result is True
             mock_open.assert_not_called()
+            mock_wait.assert_not_called()
             mock_notify.assert_not_called()
 
     def test_docker_starts_first_try(self):
@@ -140,10 +187,10 @@ class TestStartDockerWithRetry:
         with patch('prepare_environment.send_alert_email') as mock_notify, \
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
              patch('time.sleep') as mock_sleep:
 
-            mock_is_running.return_value = False
+            mock_is_docker.return_value = False
             mock_wait.return_value = True
 
             import prepare_environment
@@ -158,10 +205,10 @@ class TestStartDockerWithRetry:
         with patch('prepare_environment.send_alert_email') as mock_notify, \
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
              patch('time.sleep') as mock_sleep:
 
-            mock_is_running.return_value = False
+            mock_is_docker.return_value = False
             # 1回目失敗、2回目成功
             mock_wait.side_effect = [False, True]
 
@@ -179,10 +226,10 @@ class TestStartDockerWithRetry:
         with patch('prepare_environment.send_alert_email') as mock_notify, \
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
              patch('time.sleep') as mock_sleep:
 
-            mock_is_running.return_value = False
+            mock_is_docker.return_value = False
             mock_wait.return_value = False
 
             import prepare_environment
@@ -201,10 +248,10 @@ class TestStartDockerWithRetry:
         with patch('prepare_environment.send_alert_email') as mock_notify, \
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
              patch('time.sleep') as mock_sleep:
 
-            mock_is_running.return_value = False
+            mock_is_docker.return_value = False
             mock_wait.return_value = False
 
             import prepare_environment

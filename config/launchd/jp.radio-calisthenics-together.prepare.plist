@@ -6,7 +6,7 @@
     <string>jp.radio-calisthenics-together.prepare</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>{{REPO_DIR}}/.venv/bin/python3</string>
         <string>scripts/prepare_environment.py</string>
     </array>
     <key>StartCalendarInterval</key>
