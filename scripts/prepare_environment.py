@@ -1,13 +1,42 @@
 #!/usr/bin/env python3
+"""
+環境準備スクリプト
+
+ラジオ体操配信前にDocker/OBSを起動する。
+リトライ機能と失敗時の通知機能を備える。
+"""
 import subprocess
 import time
 import sys
 import os
 
+# プロジェクトルートとsrcディレクトリをパスに追加
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(project_root, 'src'))
+
+from rct.notify import send_alert_email
+
+
+# リトライ設定: 間隔は10秒、20秒、30秒
+RETRY_INTERVALS = [10, 20, 30]
+
+
 def log(message):
+    """タイムスタンプ付きでメッセージを出力"""
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
+
 def is_app_running(app_name):
+    """
+    アプリが起動中か確認
+
+    Args:
+        app_name: 確認するアプリ名
+
+    Returns:
+        bool: 起動中ならTrue
+    """
     try:
         # pgrep returns exit code 0 if process found, 1 if not
         subprocess.check_call(["pgrep", "-x", app_name], stdout=subprocess.DEVNULL)
@@ -15,17 +44,35 @@ def is_app_running(app_name):
     except subprocess.CalledProcessError:
         return False
 
+
 def open_app(app_name):
+    """
+    アプリを起動
+
+    Args:
+        app_name: 起動するアプリ名
+    """
     log(f"Starting {app_name}...")
     subprocess.run(["open", "-a", app_name], check=True)
 
+
 def wait_for_docker():
+    """
+    Dockerの準備完了を待機
+
+    Returns:
+        bool: 準備完了ならTrue、タイムアウトならFalse
+    """
     log("Waiting for Docker to be ready...")
     # Attempt to run a simple docker command to verify connectivity
     retries = 30
     for i in range(retries):
         try:
-            subprocess.check_call(["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.check_call(
+                ["docker", "info"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
             log("Docker is ready.")
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -33,24 +80,60 @@ def wait_for_docker():
     log("Timed out waiting for Docker.")
     return False
 
-def main():
-    log("--- Checking Environment Pre-flight ---")
 
-    # 1. Check Docker
-    if not is_app_running("Docker"):
-        log("Docker is NOT running.")
+def start_docker_with_retry():
+    """
+    Dockerをリトライ付きで起動
+
+    リトライ回数: 3回（間隔: 10秒、20秒、30秒）
+    全て失敗した場合、Email通知を送信しFalseを返す。
+
+    Returns:
+        bool: Docker起動成功ならTrue、失敗ならFalse
+    """
+    # 既に起動している場合
+    if is_app_running("Docker"):
+        log("Docker is already running.")
+        if wait_for_docker():
+            return True
+        log("Docker process is running but not responding.")
+        # 応答しない場合はリトライへ
+
+    # 最大3回試行
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        log(f"Docker startup attempt {attempt + 1}/{max_attempts}")
         open_app("Docker")
-        # Docker takes a while to boot usually
+
         if wait_for_docker():
             log("Docker started successfully.")
-        else:
-            log("Warning: Docker might not be fully ready yet.")
-    else:
-        log("Docker is already running.")
-        # Even if running, verify connectivity
-        if not wait_for_docker():
-             log("Docker process is running but not responding.")
+            return True
 
+        # 最後の試行でなければ、間隔を空けてリトライ
+        if attempt < max_attempts - 1:
+            interval = RETRY_INTERVALS[attempt]
+            log(f"Docker failed to start. Retrying in {interval} seconds...")
+            time.sleep(interval)
+
+    # 全て失敗した場合、通知を送信
+    log("ERROR: Docker failed to start after all retries.")
+    send_alert_email(
+        "Docker起動失敗",
+        f"Dockerの起動に{max_attempts}回試行しましたが、全て失敗しました。\n"
+        "手動での確認が必要です。\n\n"
+        f"時刻: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    return False
+
+
+def main():
+    """メイン処理"""
+    log("--- Checking Environment Pre-flight ---")
+
+    # 1. Docker起動（リトライ付き）
+    if not start_docker_with_retry():
+        log("Exiting due to Docker failure.")
+        sys.exit(1)
 
     # 2. Check OBS
     if not is_app_running("OBS"):
@@ -62,6 +145,7 @@ def main():
         log("OBS is already running.")
 
     log("--- Environment Preparation Complete ---")
+
 
 if __name__ == "__main__":
     main()
