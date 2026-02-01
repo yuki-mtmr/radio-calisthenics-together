@@ -45,6 +45,74 @@ FAILURE_PATTERNS = [
 ]
 
 
+def get_plist_path(task_name):
+    """
+    タスク名からplistファイルのパスを取得
+
+    Args:
+        task_name: launchdタスク名（例: jp.radio-calisthenics-together.start）
+
+    Returns:
+        str: plistファイルの絶対パス
+    """
+    return os.path.expanduser(f"~/Library/LaunchAgents/{task_name}.plist")
+
+
+def load_launchd_task(task_name):
+    """
+    launchdタスクをロードする
+
+    Args:
+        task_name: ロードするタスク名
+
+    Returns:
+        bool: ロード成功ならTrue、失敗ならFalse
+    """
+    plist_path = get_plist_path(task_name)
+
+    try:
+        result = subprocess.run(
+            ["launchctl", "load", plist_path],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            logger.info(f"Successfully loaded launchd task: {task_name}")
+            return True
+        else:
+            logger.error(f"Failed to load launchd task {task_name}: {result.stderr}")
+            return False
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        logger.error(f"Error loading launchd task {task_name}: {e}")
+        return False
+
+
+def auto_fix_launchd_tasks():
+    """
+    未ロードのlaunchdタスクを自動的にロードする
+
+    Returns:
+        tuple: (修復成功したタスクのリスト, 修復失敗したタスクのリスト)
+    """
+    missing_tasks = check_launchd_tasks()
+    fixed = []
+    failed = []
+
+    for task in missing_tasks:
+        logger.info(f"Attempting to auto-fix missing launchd task: {task}")
+        if load_launchd_task(task):
+            fixed.append(task)
+        else:
+            failed.append(task)
+
+    if fixed:
+        logger.info(f"Auto-fixed launchd tasks: {', '.join(fixed)}")
+    if failed:
+        logger.error(f"Failed to auto-fix launchd tasks: {', '.join(failed)}")
+
+    return fixed, failed
+
+
 def check_launchd_tasks():
     """
     launchdタスクのロード状態を確認
@@ -143,17 +211,22 @@ def check_yesterday_logs():
 
 def run_health_check():
     """
-    健全性チェックを実行し、問題があれば通知
+    健全性チェックを実行し、問題があれば自動修復を試み、修復できなければ通知
 
     Returns:
         bool: 全て正常ならTrue、問題ありならFalse
     """
     issues = []
 
-    # 1. launchdタスク確認
+    # 1. launchdタスク確認と自動修復
     missing_tasks = check_launchd_tasks()
     if missing_tasks:
-        issues.append(f"未ロードのlaunchdタスク: {', '.join(missing_tasks)}")
+        logger.info(f"Attempting auto-fix for missing launchd tasks: {missing_tasks}")
+        fixed, failed = auto_fix_launchd_tasks()
+        if failed:
+            issues.append(f"自動修復失敗のlaunchdタスク: {', '.join(failed)}")
+        if fixed:
+            logger.info(f"Auto-fixed launchd tasks: {', '.join(fixed)}")
 
     # 2. Docker状態確認
     docker_running = check_docker_status()

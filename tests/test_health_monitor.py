@@ -180,13 +180,15 @@ class TestRunHealthCheck:
             mock_notify.assert_not_called()
 
     def test_missing_launchd_sends_notification(self):
-        """launchdタスクが未ロードの場合、通知を送信することをテスト"""
+        """launchdタスクが未ロードで自動修復も失敗した場合、通知を送信することをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
-             patch('health_monitor.check_launchd_tasks') as mock_launchd:
+             patch('health_monitor.check_launchd_tasks') as mock_launchd, \
+             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix:
 
             mock_launchd.return_value = ["jp.radio-calisthenics-together.prepare"]
+            mock_fix.return_value = ([], ["jp.radio-calisthenics-together.prepare"])  # 修復失敗
             mock_docker.return_value = True
             mock_logs.return_value = []
 
@@ -239,9 +241,11 @@ class TestRunHealthCheck:
         with patch('health_monitor.send_alert_email') as mock_notify, \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
-             patch('health_monitor.check_launchd_tasks') as mock_launchd:
+             patch('health_monitor.check_launchd_tasks') as mock_launchd, \
+             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix:
 
             mock_launchd.return_value = ["jp.radio-calisthenics-together.prepare"]
+            mock_fix.return_value = ([], ["jp.radio-calisthenics-together.prepare"])  # 修復失敗
             mock_docker.return_value = False
             mock_logs.return_value = ["Connection refused"]
 
@@ -255,3 +259,170 @@ class TestRunHealthCheck:
             # 全ての問題が本文に含まれる
             assert "launchd" in body.lower() or "prepare" in body.lower()
             assert "Docker" in body
+
+
+class TestLoadLaunchdTask:
+    """load_launchd_task 関数のテスト"""
+
+    def test_load_task_success(self):
+        """launchdタスクのロードに成功した場合、Trueを返すことをテスト"""
+        with patch('health_monitor.subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+
+            import health_monitor
+            result = health_monitor.load_launchd_task("jp.radio-calisthenics-together.start")
+
+            assert result is True
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args[0][0]
+            assert "launchctl" in call_args
+            assert "load" in call_args
+
+    def test_load_task_failure(self):
+        """launchdタスクのロードに失敗した場合、Falseを返すことをテスト"""
+        with patch('health_monitor.subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=1)
+
+            import health_monitor
+            result = health_monitor.load_launchd_task("jp.radio-calisthenics-together.start")
+
+            assert result is False
+
+    def test_load_task_file_not_found(self):
+        """plistファイルが存在しない場合、Falseを返すことをテスト"""
+        with patch('health_monitor.subprocess.run') as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, "launchctl")
+
+            import health_monitor
+            result = health_monitor.load_launchd_task("jp.radio-calisthenics-together.nonexistent")
+
+            assert result is False
+
+
+class TestAutoFixLaunchdTasks:
+    """auto_fix_launchd_tasks 関数のテスト"""
+
+    def test_auto_fix_loads_missing_tasks(self):
+        """未ロードのタスクを自動的にロードすることをテスト"""
+        with patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.load_launchd_task') as mock_load:
+
+            mock_check.return_value = ["jp.radio-calisthenics-together.start"]
+            mock_load.return_value = True
+
+            import health_monitor
+            fixed, failed = health_monitor.auto_fix_launchd_tasks()
+
+            assert "jp.radio-calisthenics-together.start" in fixed
+            assert len(failed) == 0
+            mock_load.assert_called_once_with("jp.radio-calisthenics-together.start")
+
+    def test_auto_fix_reports_failures(self):
+        """ロードに失敗したタスクを報告することをテスト"""
+        with patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.load_launchd_task') as mock_load:
+
+            mock_check.return_value = ["jp.radio-calisthenics-together.start"]
+            mock_load.return_value = False
+
+            import health_monitor
+            fixed, failed = health_monitor.auto_fix_launchd_tasks()
+
+            assert len(fixed) == 0
+            assert "jp.radio-calisthenics-together.start" in failed
+
+    def test_auto_fix_no_missing_tasks(self):
+        """全てロード済みの場合、何もしないことをテスト"""
+        with patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.load_launchd_task') as mock_load:
+
+            mock_check.return_value = []
+
+            import health_monitor
+            fixed, failed = health_monitor.auto_fix_launchd_tasks()
+
+            assert len(fixed) == 0
+            assert len(failed) == 0
+            mock_load.assert_not_called()
+
+    def test_auto_fix_multiple_tasks(self):
+        """複数の未ロードタスクを全てロードすることをテスト"""
+        with patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.load_launchd_task') as mock_load:
+
+            mock_check.return_value = [
+                "jp.radio-calisthenics-together.start",
+                "jp.radio-calisthenics-together.stop"
+            ]
+            mock_load.return_value = True
+
+            import health_monitor
+            fixed, failed = health_monitor.auto_fix_launchd_tasks()
+
+            assert len(fixed) == 2
+            assert len(failed) == 0
+            assert mock_load.call_count == 2
+
+
+class TestRunHealthCheckWithAutoFix:
+    """run_health_check の自動修復機能のテスト"""
+
+    def test_auto_fix_before_notification(self):
+        """通知前に自動修復を試みることをテスト"""
+        with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_yesterday_logs') as mock_logs, \
+             patch('health_monitor.check_docker_status') as mock_docker, \
+             patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix:
+
+            # 最初は未ロード、修復後はOK
+            mock_check.return_value = ["jp.radio-calisthenics-together.start"]
+            mock_fix.return_value = (["jp.radio-calisthenics-together.start"], [])
+            mock_docker.return_value = True
+            mock_logs.return_value = []
+
+            import health_monitor
+            health_monitor.run_health_check()
+
+            # 自動修復が呼ばれる
+            mock_fix.assert_called_once()
+
+    def test_no_notification_if_auto_fix_succeeds(self):
+        """自動修復が成功した場合、通知しないことをテスト"""
+        with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_yesterday_logs') as mock_logs, \
+             patch('health_monitor.check_docker_status') as mock_docker, \
+             patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix:
+
+            mock_check.return_value = ["jp.radio-calisthenics-together.start"]
+            mock_fix.return_value = (["jp.radio-calisthenics-together.start"], [])
+            mock_docker.return_value = True
+            mock_logs.return_value = []
+
+            import health_monitor
+            result = health_monitor.run_health_check()
+
+            # 通知は送信されない（自動修復成功）
+            mock_notify.assert_not_called()
+            assert result is True
+
+    def test_notification_if_auto_fix_fails(self):
+        """自動修復が失敗した場合、通知することをテスト"""
+        with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_yesterday_logs') as mock_logs, \
+             patch('health_monitor.check_docker_status') as mock_docker, \
+             patch('health_monitor.check_launchd_tasks') as mock_check, \
+             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix:
+
+            mock_check.return_value = ["jp.radio-calisthenics-together.start"]
+            mock_fix.return_value = ([], ["jp.radio-calisthenics-together.start"])
+            mock_docker.return_value = True
+            mock_logs.return_value = []
+
+            import health_monitor
+            result = health_monitor.run_health_check()
+
+            # 通知が送信される（自動修復失敗）
+            mock_notify.assert_called_once()
+            assert result is False
