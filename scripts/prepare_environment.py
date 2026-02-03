@@ -21,6 +21,12 @@ from rct.notify import send_alert_email
 # リトライ設定: 間隔は10秒、20秒、30秒
 RETRY_INTERVALS = [10, 20, 30]
 
+# Docker待機設定
+DOCKER_WAIT_RETRIES = 90  # リトライ回数
+DOCKER_WAIT_INTERVAL = 2  # 各リトライ間隔（秒）
+# 合計タイムアウト: 90回 × 2秒 = 180秒（3分）
+# 3回リトライで最大約9分待機可能
+
 
 def log(message):
     """タイムスタンプ付きでメッセージを出力"""
@@ -85,9 +91,7 @@ def wait_for_docker():
         bool: 準備完了ならTrue、タイムアウトならFalse
     """
     log("Waiting for Docker to be ready...")
-    # Attempt to run a simple docker command to verify connectivity
-    retries = 30
-    for i in range(retries):
+    for i in range(DOCKER_WAIT_RETRIES):
         try:
             subprocess.check_call(
                 ["docker", "info"],
@@ -97,7 +101,7 @@ def wait_for_docker():
             log("Docker is ready.")
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
-            time.sleep(2)
+            time.sleep(DOCKER_WAIT_INTERVAL)
     log("Timed out waiting for Docker.")
     return False
 

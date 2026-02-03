@@ -160,6 +160,27 @@ class TestWaitForDocker:
 
             assert result is False
 
+    def test_wait_for_docker_timeout_is_180_seconds(self):
+        """タイムアウトが180秒（90回 × 2秒）であることをテスト"""
+        with patch('subprocess.check_call') as mock_check_call, \
+             patch('time.sleep') as mock_sleep:
+            import importlib
+            import prepare_environment
+            importlib.reload(prepare_environment)
+
+            # Dockerが常に失敗するようにモック
+            mock_check_call.side_effect = subprocess.CalledProcessError(1, "docker")
+
+            result = prepare_environment.wait_for_docker()
+
+            assert result is False
+            # リトライ回数が90回であることを確認（180秒タイムアウト）
+            # sleep(2)が90回呼ばれる = 180秒
+            assert mock_sleep.call_count == 90
+            # 各sleepが2秒であることを確認
+            for call_item in mock_sleep.call_args_list:
+                assert call_item[0][0] == 2
+
 
 class TestStartDockerWithRetry:
     """start_docker_with_retry 関数のテスト（新規追加機能）"""
