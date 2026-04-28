@@ -53,3 +53,10 @@ video_process/output/
 video_process/background.png
 rvc_models/
 audio_process/output/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Archived (legacy unused files, kept locally for safety)
+archive/

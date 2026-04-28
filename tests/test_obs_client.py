@@ -33,7 +33,42 @@ def test_start_streaming_with_media_restart(mock_obs_client):
         # Check if streaming started
         mock_obs_client.client.start_stream.assert_called()
 
-def test_start_streaming_already_active(mock_obs_client):
+def test_start_streaming_force_resets_when_already_active(mock_obs_client):
+    """OBSが既に streaming 中（壊れた状態の可能性）の場合、強制 stop → start で復旧する。
+
+    4/25からのインシデント: OBSが output_active=True のまま reconnect ループに陥り、
+    旧実装は「already active」で start を呼ばなかった結果、新broadcastに送出されなかった。
+    """
     mock_obs_client.client.get_stream_status.return_value.output_active = True
     mock_obs_client.start_streaming()
-    mock_obs_client.client.start_stream.assert_not_called()
+    mock_obs_client.client.stop_stream.assert_called()
+    mock_obs_client.client.start_stream.assert_called()
+    method_names = [c[0] for c in mock_obs_client.client.method_calls]
+    assert method_names.index("stop_stream") < method_names.index("start_stream")
+
+
+def test_start_streaming_when_inactive_does_not_force_stop(mock_obs_client):
+    mock_obs_client.client.get_stream_status.return_value.output_active = False
+    mock_obs_client.start_streaming()
+    mock_obs_client.client.stop_stream.assert_not_called()
+    mock_obs_client.client.start_stream.assert_called()
+
+
+def test_stop_streaming_when_already_stopped_returns_true(mock_obs_client):
+    """OBSが既に停止状態（output_active=False）なら stop は no-op で True を返す。"""
+    mock_obs_client.client.get_stream_status.return_value.output_active = False
+    result = mock_obs_client.stop_streaming()
+    assert result is True
+    mock_obs_client.client.stop_stream.assert_not_called()
+
+
+def test_stop_streaming_treats_501_as_success(mock_obs_client):
+    """OBSがStopStreamで501（既に止まってる）を返すケースを正常終了として扱う。"""
+    from obsws_python.error import OBSSDKRequestError
+
+    mock_obs_client.client.get_stream_status.return_value.output_active = True
+    mock_obs_client.client.stop_stream.side_effect = OBSSDKRequestError(
+        "StopStream", 501, "Output not active"
+    )
+    result = mock_obs_client.stop_streaming()
+    assert result is True

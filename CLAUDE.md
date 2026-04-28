@@ -14,11 +14,12 @@ launchdのplistを操作する際は、以下を必ず守ること：
    ```bash
    launchctl list | grep radio-calisthenics
    ```
-   4つのタスクが全て表示されることを確認：
+   5つのタスクが全て表示されることを確認：
    - jp.radio-calisthenics-together.prepare
    - jp.radio-calisthenics-together.start
    - jp.radio-calisthenics-together.stop
    - jp.radio-calisthenics-together.monitor
+   - jp.radio-calisthenics-together.bird
 
 3. **plistファイルの場所**
    ```
@@ -36,6 +37,7 @@ launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.prepare.pli
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.start.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.stop.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.monitor.plist
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.bird.plist
 
 # 確認
 launchctl list | grep radio-calisthenics
@@ -51,4 +53,32 @@ health_monitor.pyが未ロードのタスクを検出した場合、自動的に
 - 06:45 - monitor（健全性チェック）
 - 06:50 - prepare（Docker/OBS起動）
 - 06:59 - start（配信開始）
+- 06:59 - bird（鳥オーバーレイ演出をランダム発火、約16分常駐）
 - 07:15 - stop（配信終了）
+
+## 鳥オーバーレイ演出 (bird overlay)
+
+配信中、ランダムな確率で鳥が画面を横切る。
+
+### OBS 側の事前セットアップ（手動・1回だけ）
+
+1. シーン `RADIO_TAISO_LOOP` に Browser Source を追加
+2. 名前: `bird_overlay`（`.env` の `OBS_BIRD_SOURCE_NAME` と一致させる）
+3. `Local file` をチェックし、`assets/overlays/bird/index.html` を指定
+4. Width: 1920, Height: 1080
+5. デフォルトで非表示（目のアイコンOFF）にしておく
+6. 「ソースが非アクティブの時にシャットダウン」をON、「表示時にブラウザを更新」をON
+
+### 動作パラメータ（.env で調整）
+
+- `BIRD_PROBABILITY=0.15` — 30秒ごとの発火確率
+- `BIRD_INTERVAL_SEC=30` — 判定間隔
+- `BIRD_SHOW_DURATION_SEC=7` — 鳥の表示時間
+- `BIRD_DURATION_SEC=960` — director の常駐時間（デフォ16分）
+
+### 手動テスト
+
+```bash
+docker compose run --rm rct python scripts/bird_director.py \
+  --duration 30 --interval 5 --probability 0.5
+```

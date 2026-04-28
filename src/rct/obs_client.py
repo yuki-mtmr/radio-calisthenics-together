@@ -51,8 +51,15 @@ class OBSClient:
 
             status = self.client.get_stream_status()
             if status.output_active:
-                logger.info("Stream is already active.")
-                return True
+                logger.warning(
+                    "Stream is already active (possibly stale state). "
+                    "Forcing stop before restart to avoid stuck reconnect loop."
+                )
+                try:
+                    self.client.stop_stream()
+                except Exception as e:
+                    logger.warning(f"Force stop failed (continuing): {e}")
+                time.sleep(2)
 
             logger.info("Starting stream output...")
             self.client.start_stream()
@@ -94,7 +101,16 @@ class OBSClient:
                 return True
 
             logger.info("Stopping stream output...")
-            self.client.stop_stream()
+            try:
+                self.client.stop_stream()
+            except Exception as e:
+                msg = str(e)
+                if "501" in msg:
+                    logger.warning(
+                        f"StopStream returned 501 (output already inactive); treating as success: {e}"
+                    )
+                    return True
+                raise
             return True
         except Exception as e:
             logger.error(f"Stop stream error: {e}")

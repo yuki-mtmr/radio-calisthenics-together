@@ -124,11 +124,11 @@ class TestCheckYesterdayLogs:
             assert failures == []
 
     def test_docker_timeout_failure(self):
-        """ログにDockerタイムアウトがある場合、それを返すことをテスト"""
+        """昨日のログにDockerタイムアウトがある場合、それを返すことをテスト"""
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        log_data = f"[{yesterday} 06:50:00] Timed out waiting for Docker"
         with patch('health_monitor.glob.glob') as mock_glob, \
-             patch('builtins.open', mock_open(read_data="Timed out waiting for Docker")):
-
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+             patch('builtins.open', mock_open(read_data=log_data)):
             mock_glob.return_value = [f"logs/prepare_{yesterday}.log"]
 
             import health_monitor
@@ -137,11 +137,11 @@ class TestCheckYesterdayLogs:
             assert len(failures) > 0
 
     def test_connection_refused_failure(self):
-        """ログに接続拒否エラーがある場合、それを返すことをテスト"""
+        """昨日のログに接続拒否エラーがある場合、それを返すことをテスト"""
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        log_data = f"{yesterday} 07:00:00 - Connection refused"
         with patch('health_monitor.glob.glob') as mock_glob, \
-             patch('builtins.open', mock_open(read_data="Connection refused")):
-
-            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+             patch('builtins.open', mock_open(read_data=log_data)):
             mock_glob.return_value = [f"logs/start_{yesterday}.log"]
 
             import health_monitor
@@ -153,6 +153,27 @@ class TestCheckYesterdayLogs:
         """ログファイルが見つからない場合、空のリストを返すことをテスト"""
         with patch('health_monitor.glob.glob') as mock_glob:
             mock_glob.return_value = []
+
+            import health_monitor
+            failures = health_monitor.check_yesterday_logs()
+
+            assert failures == []
+
+    def test_old_failure_in_shared_log_is_ignored(self):
+        """共有stdout.logの過去の失敗を「昨日の失敗」と誤検出しない。
+
+        実インシデント: prepare_stdout.log は日次でローテートされず累積。
+        今までの実装は `pattern in content` で過去のERRORを毎朝拾い、誤通知を出していた。
+        """
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        old_log = (
+            "[2026-01-01 06:50:00] Timed out waiting for Docker\n"
+            f"[{yesterday} 06:50:01] Docker is already running.\n"
+            f"[{yesterday} 06:50:02] OBS is already running.\n"
+        )
+        with patch('health_monitor.glob.glob') as mock_glob, \
+             patch('builtins.open', mock_open(read_data=old_log)):
+            mock_glob.return_value = ["logs/prepare_stdout.log"]
 
             import health_monitor
             failures = health_monitor.check_yesterday_logs()

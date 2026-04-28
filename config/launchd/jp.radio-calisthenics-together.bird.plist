@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>jp.radio-calisthenics-together.bird</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/Docker.app/Contents/Resources/bin/docker</string>
+        <string>compose</string>
+        <string>run</string>
+        <string>--rm</string>
+        <string>rct</string>
+        <string>python</string>
+        <string>scripts/bird_director.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>59</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{{REPO_DIR}}/logs/bird_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{REPO_DIR}}/logs/bird_stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>{{REPO_DIR}}</string>
+</dict>
+</plist>

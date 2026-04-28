@@ -193,16 +193,10 @@ def check_yesterday_logs():
                 content = f.read()
 
             for pattern in FAILURE_PATTERNS:
-                if pattern in content:
-                    # 該当行を抽出
-                    for line in content.split('\n'):
-                        if pattern in line and yesterday in line:
-                            failures.append(f"{os.path.basename(log_file)}: {line.strip()}")
-                            break
-                    else:
-                        # 日付が含まれない場合でもパターンマッチを報告
-                        if pattern in content:
-                            failures.append(f"{os.path.basename(log_file)}: {pattern} found")
+                for line in content.split('\n'):
+                    if pattern in line and yesterday in line:
+                        failures.append(f"{os.path.basename(log_file)}: {line.strip()}")
+                        break
         except (IOError, OSError) as e:
             logger.warning(f"Could not read log file {log_file}: {e}")
 
