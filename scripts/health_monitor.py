@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 
 from rct.notify import send_alert_email
 from rct.logger import setup_logger
+from rct.youtube_client import YouTubeClient
 
 logger = setup_logger()
 
@@ -203,6 +204,27 @@ def check_yesterday_logs():
     return failures
 
 
+def check_youtube_token():
+    """YouTube OAuth トークンが有効か軽量API call で検証する。
+
+    Returns:
+        str | None: 問題なければ None、問題があればエラーメッセージ
+    """
+    try:
+        client = YouTubeClient()
+    except Exception as e:
+        return f"YouTubeClient 初期化失敗: {e}"
+
+    try:
+        ok, err = client.verify_token()
+    except Exception as e:
+        return f"トークン検証で例外: {e}"
+
+    if not ok:
+        return f"YouTube トークン無効: {err}"
+    return None
+
+
 def run_health_check():
     """
     健全性チェックを実行し、問題があれば自動修復を試み、修復できなければ通知
@@ -231,6 +253,11 @@ def run_health_check():
     log_failures = check_yesterday_logs()
     if log_failures:
         issues.append(f"前日のログで失敗パターン検出:\n  - " + "\n  - ".join(log_failures))
+
+    # 4. YouTube トークン検証
+    token_issue = check_youtube_token()
+    if token_issue:
+        issues.append(token_issue)
 
     # 問題があれば通知
     if issues:

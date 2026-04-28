@@ -18,6 +18,26 @@ def mock_youtube_client():
                     client = YouTubeClient()
                     yield client
 
+def test_verify_token_success_returns_true(mock_youtube_client):
+    """軽量API callが成功した場合、(True, None)を返す。"""
+    mock_youtube_client.youtube.channels().list().execute.return_value = {
+        "items": [{"id": "UCabc"}]
+    }
+    ok, err = mock_youtube_client.verify_token()
+    assert ok is True
+    assert err is None
+
+
+def test_verify_token_failure_returns_error_message(mock_youtube_client):
+    """API call が失敗した場合、(False, str) を返す。"""
+    mock_youtube_client.youtube.channels().list().execute.side_effect = Exception(
+        "Token has been expired or revoked"
+    )
+    ok, err = mock_youtube_client.verify_token()
+    assert ok is False
+    assert "expired" in err or "revoked" in err
+
+
 def test_find_broadcast_by_date(mock_youtube_client):
     # Setup mock return for liveBroadcasts().list().execute()
     mock_item = {

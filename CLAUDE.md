@@ -14,12 +14,13 @@ launchdのplistを操作する際は、以下を必ず守ること：
    ```bash
    launchctl list | grep radio-calisthenics
    ```
-   5つのタスクが全て表示されることを確認：
+   6つのタスクが全て表示されることを確認：
    - jp.radio-calisthenics-together.prepare
    - jp.radio-calisthenics-together.start
    - jp.radio-calisthenics-together.stop
    - jp.radio-calisthenics-together.monitor
    - jp.radio-calisthenics-together.bird
+   - jp.radio-calisthenics-together.obs-restart
 
 3. **plistファイルの場所**
    ```
@@ -38,6 +39,7 @@ launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.start.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.stop.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.monitor.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.bird.plist
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.obs-restart.plist
 
 # 確認
 launchctl list | grep radio-calisthenics
@@ -50,11 +52,12 @@ health_monitor.pyが未ロードのタスクを検出した場合、自動的に
 
 ## スケジュール
 
-- 06:45 - monitor（健全性チェック）
+- 06:45 - monitor（健全性チェック、YouTubeトークン検証含む）
 - 06:50 - prepare（Docker/OBS起動）
 - 06:59 - start（配信開始）
 - 06:59 - bird（鳥オーバーレイ演出をランダム発火、約16分常駐）
 - 07:15 - stop（配信終了）
+- 日曜 04:00 - obs-restart（OBS週次再起動、状態腐敗予防）
 
 ## 鳥オーバーレイ演出 (bird overlay)
 

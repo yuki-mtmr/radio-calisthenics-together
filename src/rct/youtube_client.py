@@ -1,5 +1,6 @@
 import os
 import pickle
+import time
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -7,6 +8,9 @@ from .logger import setup_logger
 from .notify import send_alert_email
 
 logger = setup_logger()
+
+TOKEN_REFRESH_MAX_RETRIES = 5
+TOKEN_REFRESH_RETRY_DELAY = 30  # seconds
 
 SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
 
@@ -24,18 +28,27 @@ class YouTubeClient:
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except Exception as e:
-                    logger.error(f"Token refresh failed: {e}")
+                last_error = None
+                for attempt in range(1, TOKEN_REFRESH_MAX_RETRIES + 1):
+                    try:
+                        creds.refresh(Request())
+                        last_error = None
+                        break
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(f"Token refresh attempt {attempt}/{TOKEN_REFRESH_MAX_RETRIES} failed: {e}")
+                        if attempt < TOKEN_REFRESH_MAX_RETRIES:
+                            logger.info(f"Retrying in {TOKEN_REFRESH_RETRY_DELAY}s...")
+                            time.sleep(TOKEN_REFRESH_RETRY_DELAY)
+                if last_error:
+                    logger.error(f"Token refresh failed after {TOKEN_REFRESH_MAX_RETRIES} attempts")
                     send_alert_email(
                         "Token Refresh Failed",
-                        f"YouTubeトークンの自動更新に失敗しました。\n\n"
-                        f"エラー: {e}\n\n"
+                        f"YouTubeトークンの自動更新に{TOKEN_REFRESH_MAX_RETRIES}回リトライしましたが失敗しました。\n\n"
+                        f"最後のエラー: {last_error}\n\n"
                         "以下のコマンドで再認証してください:\n"
                         "cd /Users/yukimatsumori/projects/radio-calisthenics-together\n"
-                        "rm config/youtube/token.pickle\n"
-                        "./venv_gui/bin/python scripts/authenticate_youtube.py"
+                        ".venv/bin/python scripts/authenticate_youtube.py"
                     )
                     creds = None  # 新規認証へフォールバック
             if not creds or not creds.valid:
@@ -119,6 +132,18 @@ class YouTubeClient:
     def delete_broadcast(self, broadcast_id):
         logger.info(f"Deleting broadcast: {broadcast_id}")
         self.youtube.liveBroadcasts().delete(id=broadcast_id).execute()
+
+    def verify_token(self):
+        """トークンが有効か軽量API call で確認する。
+
+        Returns:
+            tuple[bool, str | None]: (成功, エラーメッセージ)
+        """
+        try:
+            self.youtube.channels().list(part='id', mine=True).execute()
+            return True, None
+        except Exception as e:
+            return False, str(e)
 
     def find_broadcast_by_date(self, date_str):
         """タイトルに指定した日付が含まれる待機中の枠を探します"""

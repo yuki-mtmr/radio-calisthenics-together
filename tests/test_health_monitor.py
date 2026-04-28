@@ -181,6 +181,37 @@ class TestCheckYesterdayLogs:
             assert failures == []
 
 
+class TestCheckYoutubeToken:
+    """check_youtube_token 関数のテスト"""
+
+    def test_token_valid_returns_none(self):
+        """軽量API callが成功した場合、Noneを返す。"""
+        mock_yt = MagicMock()
+        mock_yt.verify_token.return_value = (True, None)
+        with patch('health_monitor.YouTubeClient', return_value=mock_yt):
+            import health_monitor
+            result = health_monitor.check_youtube_token()
+            assert result is None
+
+    def test_token_invalid_returns_error_message(self):
+        """API call が失敗した場合、エラーメッセージを返す。"""
+        mock_yt = MagicMock()
+        mock_yt.verify_token.return_value = (False, "Token has been expired or revoked")
+        with patch('health_monitor.YouTubeClient', return_value=mock_yt):
+            import health_monitor
+            result = health_monitor.check_youtube_token()
+            assert result is not None
+            assert "expired" in result or "revoked" in result
+
+    def test_youtube_client_instantiation_fails_returns_error(self):
+        """YouTubeClient 初期化で例外が出た場合、エラーメッセージを返す。"""
+        with patch('health_monitor.YouTubeClient', side_effect=Exception("client_secrets.json missing")):
+            import health_monitor
+            result = health_monitor.check_youtube_token()
+            assert result is not None
+            assert "client_secrets" in result
+
+
 class TestRunHealthCheck:
     """run_health_check 関数のテスト"""
 
@@ -240,6 +271,26 @@ class TestRunHealthCheck:
             call_args = mock_notify.call_args
             content = call_args[0][0] + call_args[0][1]
             assert "Docker" in content
+
+    def test_youtube_token_invalid_sends_notification(self):
+        """YouTube tokenが無効な場合、通知を送信する。"""
+        with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_yesterday_logs') as mock_logs, \
+             patch('health_monitor.check_docker_status') as mock_docker, \
+             patch('health_monitor.check_launchd_tasks') as mock_launchd, \
+             patch('health_monitor.check_youtube_token') as mock_token:
+
+            mock_launchd.return_value = []
+            mock_docker.return_value = True
+            mock_logs.return_value = []
+            mock_token.return_value = "Token has been expired or revoked"
+
+            import health_monitor
+            health_monitor.run_health_check()
+
+            mock_notify.assert_called_once()
+            body = mock_notify.call_args[0][1]
+            assert "Token" in body or "token" in body or "YouTube" in body
 
     def test_log_failures_sends_notification(self):
         """ログに失敗パターンがある場合、通知を送信することをテスト"""
