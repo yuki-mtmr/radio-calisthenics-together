@@ -23,7 +23,8 @@ def test_set_scene(mock_obs_client):
 def test_start_streaming_with_media_restart(mock_obs_client):
     # Mock settings
     with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
-        mock_obs_client.start_streaming()
+        with patch('rct.obs_client.time.sleep'):  # speed up test
+            mock_obs_client.start_streaming()
 
         # Check if media restart was triggered
         mock_obs_client.client.trigger_media_input_action.assert_called_with(
@@ -32,6 +33,22 @@ def test_start_streaming_with_media_restart(mock_obs_client):
         )
         # Check if streaming started
         mock_obs_client.client.start_stream.assert_called()
+
+
+def test_start_streaming_waits_for_media_buffer_after_restart(mock_obs_client):
+    """media restart 後に MEDIA_BUFFER_WAIT_SEC 秒待つ。
+
+    4/30インシデント: 0.012秒で start_stream を呼んだ結果バッファ未蓄積で
+    実効0.5fps、YouTubeに stalled stream と判断され15分で切断された。
+    """
+    from rct.obs_client import MEDIA_BUFFER_WAIT_SEC
+
+    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+        with patch('rct.obs_client.time.sleep') as mock_sleep:
+            mock_obs_client.start_streaming()
+
+        sleep_durations = [c.args[0] for c in mock_sleep.call_args_list]
+        assert MEDIA_BUFFER_WAIT_SEC in sleep_durations
 
 def test_start_streaming_force_resets_when_already_active(mock_obs_client):
     """OBSが既に streaming 中（壊れた状態の可能性）の場合、強制 stop → start で復旧する。

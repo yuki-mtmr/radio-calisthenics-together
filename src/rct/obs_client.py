@@ -7,6 +7,8 @@ from .settings import settings
 
 logger = setup_logger()
 
+MEDIA_BUFFER_WAIT_SEC = 5  # media source restart 後にエンコーダーがバッファ蓄積する時間
+
 class OBSClient:
     def __init__(self):
         self.host = settings.OBS_WS_HOST
@@ -43,6 +45,11 @@ class OBSClient:
                     # 2. 再送を開始し、再読み込みさせる
                     self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
                     self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
+                    # 3. エンコーダーがフレームバッファを蓄積するまで待機
+                    #    4/30インシデント: 0.012秒で start_stream を呼んで lag 25%, drop 9.7%、
+                    #    実効0.5fps しか出ず YouTube に stalled stream と判断され15分後切断
+                    logger.info(f"Waiting {MEDIA_BUFFER_WAIT_SEC}s for media buffer to fill...")
+                    time.sleep(MEDIA_BUFFER_WAIT_SEC)
                     logger.info("Media source refreshed and restarted.")
                 except Exception as e:
                     logger.warning(f"Media refresh failed: {e}")
