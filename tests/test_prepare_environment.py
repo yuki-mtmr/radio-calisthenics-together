@@ -61,10 +61,11 @@ class TestIsDockerRunning:
             result = prepare_environment.is_docker_running()
 
             assert result is True
-            # docker infoコマンドが呼ばれていることを確認
+            # docker infoコマンドが呼ばれていることを確認（絶対パス対応）
             mock_check_call.assert_called_once()
             call_args = mock_check_call.call_args[0][0]
-            assert call_args == ["docker", "info"]
+            assert call_args[-1] == "info"
+            assert call_args[0].endswith("docker")
 
     def test_docker_not_running_when_docker_info_fails(self):
         """docker infoが失敗する場合、Falseを返すことをテスト"""

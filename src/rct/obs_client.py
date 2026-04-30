@@ -42,15 +42,18 @@ class OBSClient:
                     # 1. 一旦非表示にして描画を止める
                     self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, False)
                     time.sleep(0.5)
-                    # 2. 再送を開始し、再読み込みさせる
+                    # 2. 再送を開始し、PAUSE して位置0で凍結
+                    #    5/1インシデント: バッファ待機中に動画が再生されてしまい、
+                    #    視聴者には冒頭5〜10秒が抜けて見えていた
                     self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
+                    self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE")
                     self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
-                    # 3. エンコーダーがフレームバッファを蓄積するまで待機
+                    # 3. エンコーダーがフレームバッファを蓄積するまで静止画で待機
                     #    4/30インシデント: 0.012秒で start_stream を呼んで lag 25%, drop 9.7%、
                     #    実効0.5fps しか出ず YouTube に stalled stream と判断され15分後切断
-                    logger.info(f"Waiting {MEDIA_BUFFER_WAIT_SEC}s for media buffer to fill...")
+                    logger.info(f"Waiting {MEDIA_BUFFER_WAIT_SEC}s for media buffer to fill (paused at position 0)...")
                     time.sleep(MEDIA_BUFFER_WAIT_SEC)
-                    logger.info("Media source refreshed and restarted.")
+                    logger.info("Media source refreshed and paused at position 0.")
                 except Exception as e:
                     logger.warning(f"Media refresh failed: {e}")
             else:
@@ -70,6 +73,18 @@ class OBSClient:
 
             logger.info("Starting stream output...")
             self.client.start_stream()
+
+            # 配信開始後にメディアを再生開始 (視聴者は位置0から見える)
+            if settings.OBS_MEDIA_SOURCE_NAME:
+                time.sleep(0.5)  # ストリームが安定するまで少し待つ
+                try:
+                    self.client.trigger_media_input_action(
+                        settings.OBS_MEDIA_SOURCE_NAME,
+                        "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PLAY"
+                    )
+                    logger.info("Media playback resumed from position 0.")
+                except Exception as e:
+                    logger.warning(f"Media play resume failed: {e}")
             return True
         except Exception as e:
             logger.error(f"Start stream error: {e}")

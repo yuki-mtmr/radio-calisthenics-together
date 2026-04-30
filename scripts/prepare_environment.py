@@ -27,6 +27,24 @@ DOCKER_WAIT_INTERVAL = 2  # 各リトライ間隔（秒）
 # 合計タイムアウト: 90回 × 2秒 = 180秒（3分）
 # 3回リトライで最大約9分待機可能
 
+# Docker CLI のフルパス候補。launchd 環境下では PATH に Docker のbinが入って
+# いない場合があるため絶対パスでフォールバック。
+# 5/1インシデント: prepare/monitor が "docker" コマンド見つからず誤通知
+DOCKER_BIN_CANDIDATES = [
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+    "/usr/local/bin/docker",
+    "/opt/homebrew/bin/docker",
+    "docker",  # PATH fallback
+]
+
+
+def _docker_bin():
+    """利用可能な docker バイナリパスを返す。"""
+    for path in DOCKER_BIN_CANDIDATES:
+        if path == "docker" or os.path.isfile(path):
+            return path
+    return "docker"  # 最後のフォールバック
+
 
 def log(message):
     """タイムスタンプ付きでメッセージを出力"""
@@ -63,7 +81,7 @@ def is_docker_running():
     """
     try:
         subprocess.check_call(
-            ["docker", "info"],
+            [_docker_bin(), "info"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -94,7 +112,7 @@ def wait_for_docker():
     for i in range(DOCKER_WAIT_RETRIES):
         try:
             subprocess.check_call(
-                ["docker", "info"],
+                [_docker_bin(), "info"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )

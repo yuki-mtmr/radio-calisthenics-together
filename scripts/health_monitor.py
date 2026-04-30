@@ -142,6 +142,22 @@ def check_launchd_tasks():
     return missing_tasks
 
 
+DOCKER_BIN_CANDIDATES = [
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+    "/usr/local/bin/docker",
+    "/opt/homebrew/bin/docker",
+    "docker",
+]
+
+
+def _docker_bin():
+    """利用可能な docker バイナリパスを返す。launchd 環境下の PATH 不足対応。"""
+    for path in DOCKER_BIN_CANDIDATES:
+        if path == "docker" or os.path.isfile(path):
+            return path
+    return "docker"
+
+
 def check_docker_status():
     """
     Docker daemonの起動状態を確認
@@ -151,7 +167,7 @@ def check_docker_status():
     """
     try:
         result = subprocess.run(
-            ["docker", "info"],
+            [_docker_bin(), "info"],
             capture_output=True,
             text=True
         )
