@@ -220,11 +220,13 @@ class TestRunHealthCheck:
         with patch('health_monitor.send_alert_email') as mock_notify, \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
-             patch('health_monitor.check_launchd_tasks') as mock_launchd:
+             patch('health_monitor.check_launchd_tasks') as mock_launchd, \
+             patch('health_monitor.check_youtube_token') as mock_token:
 
             mock_launchd.return_value = []
             mock_docker.return_value = True
             mock_logs.return_value = []
+            mock_token.return_value = None
 
             import health_monitor
             health_monitor.run_health_check()
@@ -465,12 +467,14 @@ class TestRunHealthCheckWithAutoFix:
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_check, \
-             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix:
+             patch('health_monitor.auto_fix_launchd_tasks') as mock_fix, \
+             patch('health_monitor.check_youtube_token') as mock_token:
 
             mock_check.return_value = ["jp.radio-calisthenics-together.start"]
             mock_fix.return_value = (["jp.radio-calisthenics-together.start"], [])
             mock_docker.return_value = True
             mock_logs.return_value = []
+            mock_token.return_value = None
 
             import health_monitor
             result = health_monitor.run_health_check()
