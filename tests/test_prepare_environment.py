@@ -290,31 +290,126 @@ class TestMain:
     def test_main_exits_on_docker_failure(self):
         """Docker起動失敗時にsys.exit(1)で終了することをテスト"""
         with patch('prepare_environment.sys.exit') as mock_exit, \
-             patch('prepare_environment.start_docker_with_retry') as mock_docker_retry, \
-             patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
-             patch('time.sleep') as mock_sleep:
-
-            mock_docker_retry.return_value = False
-
+             patch('prepare_environment.start_docker_with_retry', return_value=False), \
+             patch('prepare_environment.ensure_obs_running') as mock_ensure_obs:
             import prepare_environment
             prepare_environment.main()
-
             mock_exit.assert_called_once_with(1)
 
     def test_main_continues_when_docker_succeeds(self):
-        """Docker起動成功時にOBS起動処理に進むことをテスト"""
+        """Docker起動成功時にOBS起動処理 (ensure_obs_running) に進むことをテスト"""
         with patch('prepare_environment.sys.exit') as mock_exit, \
-             patch('prepare_environment.start_docker_with_retry') as mock_docker_retry, \
-             patch('prepare_environment.open_app') as mock_open, \
-             patch('prepare_environment.is_app_running') as mock_is_running, \
-             patch('time.sleep') as mock_sleep:
-
-            mock_docker_retry.return_value = True
-            mock_is_running.return_value = False  # OBSは起動していない
-
+             patch('prepare_environment.start_docker_with_retry', return_value=True), \
+             patch('prepare_environment.ensure_obs_running') as mock_ensure_obs:
             import prepare_environment
             prepare_environment.main()
-
             mock_exit.assert_not_called()
+            mock_ensure_obs.assert_called_once()
+
+
+class TestObsHealthCheck:
+    """5/21 OBS クラッシュ回帰: プロセスが生きていても WebSocket が死ぬケース"""
+
+    def test_websocket_responsive_returns_true_when_socket_connects(self):
+        import importlib
+        import prepare_environment
+        importlib.reload(prepare_environment)
+
+        with patch("prepare_environment.socket.create_connection") as mock_conn:
+            mock_conn.return_value.__enter__.return_value = MagicMock()
+            mock_conn.return_value.__exit__.return_value = False
+            assert prepare_environment.is_obs_websocket_responsive() is True
+
+    def test_websocket_responsive_returns_false_on_connection_refused(self):
+        import socket as socket_mod
+        import importlib
+        import prepare_environment
+        importlib.reload(prepare_environment)
+
+        with patch("prepare_environment.socket.create_connection",
+                   side_effect=socket_mod.error()):
+            assert prepare_environment.is_obs_websocket_responsive() is False
+
+    def test_ensure_obs_running_noop_when_healthy(self):
+        """OBS プロセス + WebSocket 共に OK なら何もしない"""
+        import importlib
+        import prepare_environment
+        importlib.reload(prepare_environment)
+
+        with patch("prepare_environment.is_app_running", return_value=True), \
+             patch("prepare_environment.is_obs_websocket_responsive", return_value=True), \
+             patch("prepare_environment.subprocess.run") as mock_run, \
+             patch("prepare_environment.open_app") as mock_open:
+            prepare_environment.ensure_obs_running()
+            mock_open.assert_not_called()
+            mock_run.assert_not_called()
+
+    def test_ensure_obs_running_kills_and_restarts_when_websocket_dead(self):
+        """プロセスは生きてるが WebSocket 死亡 → pkill → 再起動 → 復活確認"""
+        import importlib
+        import prepare_environment
+        importlib.reload(prepare_environment)
+
+        with patch("prepare_environment.is_app_running", return_value=True), \
+             patch("prepare_environment.is_obs_websocket_responsive",
+                   side_effect=[False, True]), \
+             patch("prepare_environment.subprocess.run") as mock_run, \
+             patch("prepare_environment.open_app") as mock_open, \
+             patch("prepare_environment.time.sleep"):
+            prepare_environment.ensure_obs_running()
+
+            kill_call = mock_run.call_args_list[0][0][0]
+            assert kill_call[0] == "pkill"
+            assert "OBS" in kill_call
             mock_open.assert_called_with("OBS")
+
+    def test_ensure_obs_running_starts_when_process_missing(self):
+        """OBS プロセスが無ければ起動 → WebSocket 待機"""
+        import importlib
+        import prepare_environment
+        importlib.reload(prepare_environment)
+
+        with patch("prepare_environment.is_app_running", return_value=False), \
+             patch("prepare_environment.is_obs_websocket_responsive",
+                   side_effect=[False, True]), \
+             patch("prepare_environment.subprocess.run") as mock_run, \
+             patch("prepare_environment.open_app") as mock_open, \
+             patch("prepare_environment.time.sleep"):
+            prepare_environment.ensure_obs_running()
+
+            mock_open.assert_called_with("OBS")
+            mock_run.assert_not_called()
+
+
+class TestExclusiveRunGuard:
+    """多重 trigger 抑止のテスト (06:30/06:40/06:50)"""
+
+    def test_main_skips_when_already_running(self, tmp_path):
+        """別 trigger が既に動いていれば exit 0 で skip"""
+        from rct.lockfile import AlreadyRunning
+
+        import prepare_environment
+
+        with patch('prepare_environment._run_preparation') as mock_run, \
+             patch('prepare_environment.exclusive_run') as mock_lock:
+            mock_lock.return_value.__enter__.side_effect = AlreadyRunning("locked")
+            mock_lock.return_value.__exit__.return_value = False
+
+            with pytest.raises(SystemExit) as exc_info:
+                prepare_environment.main()
+
+            assert exc_info.value.code == 0
+            mock_run.assert_not_called()
+
+    def test_main_runs_preparation_when_lock_available(self):
+        """lock が取れれば通常の準備処理が走る"""
+        import prepare_environment
+
+        with patch('prepare_environment._run_preparation') as mock_run, \
+             patch('prepare_environment.exclusive_run') as mock_lock:
+            mock_lock.return_value.__enter__.return_value = None
+            mock_lock.return_value.__exit__.return_value = False
+
+            prepare_environment.main()
+
+            mock_run.assert_called_once()

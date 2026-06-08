@@ -38,6 +38,37 @@ def test_verify_token_failure_returns_error_message(mock_youtube_client):
     assert "expired" in err or "revoked" in err
 
 
+def test_list_active_broadcasts_returns_items(mock_youtube_client):
+    """broadcastStatus=active のリストを取得できる"""
+    mock_item = {
+        'id': 'active_id',
+        'snippet': {'title': 'みんなでラジオ体操 (2026/05/20 11:15)'}
+    }
+    mock_youtube_client.youtube.liveBroadcasts().list().execute.return_value = {
+        'items': [mock_item]
+    }
+
+    items = mock_youtube_client.list_active_broadcasts()
+
+    assert len(items) == 1
+    assert items[0]['id'] == 'active_id'
+
+
+def test_list_active_broadcasts_uses_active_status(mock_youtube_client):
+    """broadcastStatus パラメータが 'active' で呼ばれる"""
+    mock_youtube_client.youtube.liveBroadcasts().list().execute.return_value = {'items': []}
+
+    mock_youtube_client.list_active_broadcasts()
+
+    # list() が broadcastStatus='active' で呼ばれたか
+    list_calls = mock_youtube_client.youtube.liveBroadcasts().list.call_args_list
+    found_active_call = any(
+        call.kwargs.get('broadcastStatus') == 'active'
+        for call in list_calls
+    )
+    assert found_active_call, "list() must be called with broadcastStatus='active'"
+
+
 def test_find_broadcast_by_date(mock_youtube_client):
     # Setup mock return for liveBroadcasts().list().execute()
     mock_item = {

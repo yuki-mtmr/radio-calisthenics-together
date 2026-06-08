@@ -15,39 +15,77 @@ from rct.notify import send_alert_email
 
 logger = setup_logger()
 
+# 2026-05-18 インシデント: 06:46 に DNS/ネット瞬断で youtube.googleapis.com 名前解決失敗
+YOUTUBE_RETRIES = 3
+YOUTUBE_RETRY_DELAY = 5
+
+
+def _setup_youtube_broadcast():
+    """YouTube broadcast + stream をリトライ付きで準備する。"""
+    last_exc = None
+    for attempt in range(YOUTUBE_RETRIES):
+        try:
+            yt = YouTubeClient()
+            now = datetime.now()
+            now_date_str = now.strftime('%Y/%m/%d')
+            target_title = f"みんなでラジオ体操 ({now_date_str}"
+
+            upcoming = yt.list_upcoming_broadcasts()
+            broadcast = None
+            for item in upcoming:
+                if target_title in item['snippet']['title']:
+                    broadcast = item
+                    logger.info(f"Found existing upcoming broadcast: {broadcast['snippet']['title']}")
+                    break
+
+            if not broadcast:
+                now_dt = datetime.now()
+                title = f"みんなでラジオ体操 ({now_dt.strftime('%Y/%m/%d %H:%M')})"
+                description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"
+                start_iso = (datetime.utcnow() + timedelta(minutes=1)).isoformat() + 'Z'
+                broadcast = yt.create_broadcast(title, description, start_time_iso=start_iso, privacy_status=settings.YOUTUBE_PRIVACY_STATUS)
+                logger.info(f"New YouTube Broadcast created. ID: {broadcast['id']}")
+
+            stream = yt.create_stream(f"Stream {now.strftime('%H:%M:%S')}")
+            yt.bind_broadcast(broadcast['id'], stream['id'])
+            stream_key = stream['cdn']['ingestionInfo']['streamName']
+            return broadcast, stream_key
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"YouTube setup attempt {attempt + 1}/{YOUTUBE_RETRIES} failed: {e}")
+            if attempt < YOUTUBE_RETRIES - 1:
+                logger.info(f"Retrying in {YOUTUBE_RETRY_DELAY}s...")
+                time.sleep(YOUTUBE_RETRY_DELAY)
+    raise last_exc
+
+
+def _is_already_broadcasting():
+    """orchestrator や verify_stream が先に start を呼んだ場合の重複起動防止。
+
+    YouTube API の active broadcast 一覧に「みんなでラジオ体操」を含むタイトルが
+    あれば True。API 呼び出しが失敗したらフォールバックして False (既存フローに任せる)。
+    """
+    try:
+        yt = YouTubeClient()
+        for item in yt.list_active_broadcasts():
+            title = item.get("snippet", {}).get("title", "")
+            if "みんなでラジオ体操" in title:
+                return True
+        return False
+    except Exception as e:
+        logger.warning(f"_is_already_broadcasting check failed: {e}")
+        return False
+
+
 def main():
     logger.info("--- Starting Phase 2 Live Process ---")
 
+    if _is_already_broadcasting():
+        logger.info("Already broadcasting. Skipping duplicate start.")
+        return
+
     try:
-        # 1. YouTube Live 枠の作成 または 既存枠の検索
-        yt = YouTubeClient()
-        now = datetime.now()
-        now_date_str = now.strftime('%Y/%m/%d')
-        target_title = f"みんなでラジオ体操 ({now_date_str}" # 部分一致で検索
-
-        upcoming = yt.list_upcoming_broadcasts()
-        broadcast = None
-        for item in upcoming:
-            if target_title in item['snippet']['title']:
-                broadcast = item
-                logger.info(f"Found existing upcoming broadcast: {broadcast['snippet']['title']}")
-                break
-
-        if not broadcast:
-            now_dt = datetime.now()
-            title = f"みんなでラジオ体操 ({now_dt.strftime('%Y/%m/%d %H:%M')})"
-            description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"
-
-            # 1分後の開始として枠を作成
-            start_iso = (datetime.utcnow() + timedelta(minutes=1)).isoformat() + 'Z'
-            broadcast = yt.create_broadcast(title, description, start_time_iso=start_iso, privacy_status=settings.YOUTUBE_PRIVACY_STATUS)
-            logger.info(f"New YouTube Broadcast created. ID: {broadcast['id']}")
-
-        # ストリームは毎回作成してバインド（既存ストリームの再利用が難しいため）
-        stream = yt.create_stream(f"Stream {now.strftime('%H:%M:%S')}")
-        yt.bind_broadcast(broadcast['id'], stream['id'])
-
-        stream_key = stream['cdn']['ingestionInfo']['streamName']
+        broadcast, stream_key = _setup_youtube_broadcast()
 
         # 2. OBS の制御
         obs = OBSClient()

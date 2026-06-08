@@ -129,6 +129,16 @@ class YouTubeClient:
         response = request.execute()
         return response.get('items', [])
 
+    def list_active_broadcasts(self):
+        """現在配信中の broadcast を取得する。verify_stream の自動検証で利用。"""
+        request = self.youtube.liveBroadcasts().list(
+            part='snippet,status',
+            broadcastStatus='active',
+            maxResults=20
+        )
+        response = request.execute()
+        return response.get('items', [])
+
     def delete_broadcast(self, broadcast_id):
         logger.info(f"Deleting broadcast: {broadcast_id}")
         self.youtube.liveBroadcasts().delete(id=broadcast_id).execute()

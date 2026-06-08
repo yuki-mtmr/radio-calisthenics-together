@@ -35,6 +35,9 @@ config/youtube/token.pickle
 # Docker
 .docker_node_root
 
+# Multi-trigger lock files
+.locks/
+
 # Logs
 logs/*.log
 !logs/.gitkeep
@@ -60,3 +63,15 @@ htmlcov/
 
 # Archived (legacy unused files, kept locally for safety)
 archive/
+
+# Additional virtual environments (pose/AI pipeline)
+.venv_mediapipe/
+.venv_wham/
+
+# Vendored third-party (cloned separately, not committed)
+/WHAM/
+/smpl2bvh/
+
+# Pipeline outputs and large binary assets
+/output/
+*.vrm

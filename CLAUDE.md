@@ -14,7 +14,8 @@ launchdのplistを操作する際は、以下を必ず守ること：
    ```bash
    launchctl list | grep radio-calisthenics
    ```
-   6つのタスクが全て表示されることを確認：
+   7つのタスクが全て表示されることを確認：
+   - jp.radio-calisthenics-together.caffeinate
    - jp.radio-calisthenics-together.prepare
    - jp.radio-calisthenics-together.start
    - jp.radio-calisthenics-together.stop
@@ -34,6 +35,7 @@ launchdのplistを操作する際は、以下を必ず守ること：
 launchctl unload ~/Library/LaunchAgents/jp.radio-calisthenics-together.*.plist
 
 # 全てロード（個別に指定）
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.caffeinate.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.prepare.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.start.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.stop.plist
@@ -53,11 +55,23 @@ health_monitor.pyが未ロードのタスクを検出した場合、自動的に
 ## スケジュール
 
 - 06:45 - monitor（健全性チェック、YouTubeトークン検証含む）
+- 06:48 - caffeinate（Macスリープ抑止、22分間 = 07:10まで保持）
 - 06:50 - prepare（Docker/OBS起動）
 - 06:59 - start（配信開始）
 - 06:59 - bird（鳥オーバーレイ演出をランダム発火、約16分常駐）
-- 07:15 - stop（配信終了）
+- 07:05 - stop（配信終了）
 - 日曜 04:00 - obs-restart（OBS週次再起動、状態腐敗予防）
+
+### スリープ対策
+
+過去にMacスリープでstart.pyの`time.sleep`が中断され配信失敗した事例あり (2026-05-16)。対策:
+
+1. **caffeinate plist** (06:48-07:10): launchdが起動できれば、その時点以降のスリープを抑止
+2. **pmset repeat wake** (要sudo、別途設定): Macを06:45に確実にフルWakeさせる
+   ```bash
+   sudo pmset repeat wake MTWRFSU 06:45:00
+   ```
+   設定済か確認: `pmset -g sched`
 
 ## 鳥オーバーレイ演出 (bird overlay)
 
