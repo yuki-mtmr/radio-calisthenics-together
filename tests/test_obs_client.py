@@ -14,6 +14,12 @@ def mock_obs_client():
         status = MagicMock()
         status.output_active = False
         client.client.get_stream_status.return_value = status
+        # Default mock for get_media_input_status (位置ガードが参照する)
+        # 既定では位置0で静止しているものとし、ガードが余計な再送をしないようにする
+        media_status = MagicMock()
+        media_status.media_cursor = 0
+        media_status.media_state = "OBS_MEDIA_STATE_PAUSED"
+        client.client.get_media_input_status.return_value = media_status
         yield client
 
 def test_set_scene(mock_obs_client):
@@ -88,6 +94,120 @@ def test_start_streaming_calls_play_after_start_stream(mock_obs_client):
         start_stream_indices = [i for i, n in enumerate(method_names) if n == "start_stream"]
         assert play_indices and start_stream_indices
         assert max(play_indices) > min(start_stream_indices)
+
+
+def _calls_before(calls, start_idx, action):
+    """start_idx より前の trigger_media_input_action(action) のインデックス一覧。"""
+    return [
+        i for i, c in enumerate(calls)
+        if i < start_idx
+        and c[0] == "trigger_media_input_action"
+        and len(c.args) >= 2 and c.args[1] == action
+    ]
+
+
+def test_media_restart_pause_happen_after_source_enabled(mock_obs_client):
+    """RESTART/PAUSE は表示(enable=True)の "後" かつ start_stream の "前" に送る。
+
+    5/1→再発インシデント: enable より前に PAUSE しても、enable 時に OBS の
+    restart_on_activate(デフォルトON) が発火して位置0から再生が始まり、PAUSE が
+    上書きされる。warmup 中に動画が進んで冒頭5〜10秒が切れていた。enable の後に
+    RESTART+PAUSE を送れば、アクティブなソースに対して確実に位置0で凍結できる。
+    """
+    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+        with patch('rct.obs_client.time.sleep'):
+            mock_obs_client.start_streaming()
+
+    calls = mock_obs_client.client.method_calls
+    names = [c[0] for c in calls]
+    start_idx = names.index("start_stream")
+
+    # 最後の enable(True)（= 表示）のインデックス
+    enable_true_idx = max(
+        i for i, c in enumerate(calls)
+        if c[0] == "set_scene_item_enabled" and len(c.args) >= 3 and c.args[2] is True
+    )
+    restart_idx = min(_calls_before(calls, start_idx, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"))
+    pause_idx = min(_calls_before(calls, start_idx, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE"))
+
+    # enable(True) → RESTART → PAUSE → start_stream の順
+    assert enable_true_idx < restart_idx < pause_idx < start_idx
+
+
+def test_start_streaming_repauses_when_media_drifted(mock_obs_client):
+    """位置ガード: warmup 後に media_cursor がドリフトしていたら start_stream 前に再 RESTART+PAUSE。
+
+    restart_on_activate 等で動画が進んでしまったケースを実位置で検知し、配信開始前に
+    位置0へ戻す（再発防止の防御層）。
+    """
+    drift = MagicMock()
+    drift.media_cursor = 4500  # 4.5秒進んでしまっている
+    drift.media_state = "OBS_MEDIA_STATE_PLAYING"
+    mock_obs_client.client.get_media_input_status.return_value = drift
+
+    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+        with patch('rct.obs_client.time.sleep'):
+            mock_obs_client.start_streaming()
+
+    calls = mock_obs_client.client.method_calls
+    names = [c[0] for c in calls]
+    start_idx = names.index("start_stream")
+
+    # 位置を確認したうえで、初回(enable後)＋ガード再送で RESTART/PAUSE が2回以上
+    mock_obs_client.client.get_media_input_status.assert_called()
+    assert len(_calls_before(calls, start_idx, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")) >= 2
+    assert len(_calls_before(calls, start_idx, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE")) >= 2
+
+
+def test_start_streaming_does_not_repause_when_media_at_zero(mock_obs_client):
+    """位置ガード: media_cursor が0付近(既定)なら位置を確認するが余計な再送はしない。"""
+    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+        with patch('rct.obs_client.time.sleep'):
+            mock_obs_client.start_streaming()
+
+    calls = mock_obs_client.client.method_calls
+    names = [c[0] for c in calls]
+    start_idx = names.index("start_stream")
+
+    # ガードは位置を確認する（= get_media_input_status を呼ぶ）
+    mock_obs_client.client.get_media_input_status.assert_called()
+    # 0付近なので enable 後の1回のみ（再送なし）
+    assert len(_calls_before(calls, start_idx, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")) == 1
+    assert len(_calls_before(calls, start_idx, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE")) == 1
+
+
+def test_freeze_media_at_zero_sequence(mock_obs_client):
+    """_freeze_media_at_zero: RESTART → 待機(settle) → PAUSE → cursor0 の順で確実に凍結する。
+
+    OBS の RESTART は非同期で、待機なしに PAUSE を送ると再生が止まらない（実機確認）。
+    この待機が頭切れ修正の核心。
+    """
+    from rct.obs_client import RESTART_SETTLE_SEC
+
+    with patch('rct.obs_client.time.sleep') as mock_sleep:
+        mock_obs_client._freeze_media_at_zero('test_video.mp4')
+
+    actions = [
+        c.args[1] for c in mock_obs_client.client.trigger_media_input_action.call_args_list
+    ]
+    assert actions == [
+        "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART",
+        "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE",
+    ]
+    # RESTART と PAUSE の間に settle 待機が1回入る
+    mock_sleep.assert_called_once_with(RESTART_SETTLE_SEC)
+    # 位置を厳密に0へ寄せる
+    mock_obs_client.client.set_media_input_cursor.assert_called_once_with('test_video.mp4', 0)
+
+
+def test_start_streaming_seeks_media_cursor_to_zero(mock_obs_client):
+    """start_streaming は凍結時に set_media_input_cursor(source, 0) を呼ぶ。"""
+    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+        with patch('rct.obs_client.time.sleep'):
+            mock_obs_client.start_streaming()
+
+    mock_obs_client.client.set_media_input_cursor.assert_any_call('test_video.mp4', 0)
+
 
 def test_start_streaming_force_resets_when_already_active(mock_obs_client):
     """OBSが既に streaming 中（壊れた状態の可能性）の場合、強制 stop → start で復旧する。

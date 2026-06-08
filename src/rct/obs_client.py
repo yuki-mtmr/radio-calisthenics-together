@@ -8,6 +8,8 @@ from .settings import settings
 logger = setup_logger()
 
 MEDIA_BUFFER_WAIT_SEC = 5  # media source restart 後にエンコーダーがバッファ蓄積する時間
+MEDIA_CURSOR_TOLERANCE_MS = 500  # warmup 後に許容する再生位置のズレ（これを超えたら再凍結）
+RESTART_SETTLE_SEC = 0.5  # RESTART(非同期)が落ち着くまでの待機。これが無いと PAUSE が再生に負ける（実機確認）
 
 class OBSClient:
     def __init__(self):
@@ -39,20 +41,25 @@ class OBSClient:
             if settings.OBS_MEDIA_SOURCE_NAME:
                 logger.info(f"Force refreshing media source: '{settings.OBS_MEDIA_SOURCE_NAME}'")
                 try:
-                    # 1. 一旦非表示にして描画を止める
+                    # 1. 一旦非表示にして描画を止める（ソースのリフレッシュ）
                     self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, False)
                     time.sleep(0.5)
-                    # 2. 再送を開始し、PAUSE して位置0で凍結
-                    #    5/1インシデント: バッファ待機中に動画が再生されてしまい、
-                    #    視聴者には冒頭5〜10秒が抜けて見えていた
-                    self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
-                    self.client.trigger_media_input_action(settings.OBS_MEDIA_SOURCE_NAME, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE")
+                    # 2. 先に表示（アクティブ化）する。restart_on_activate(デフォルトON) で
+                    #    ここで動画が位置0から自動再生される。
                     self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
-                    # 3. エンコーダーがフレームバッファを蓄積するまで静止画で待機
+                    time.sleep(0.3)
+                    # 3. 位置0で確実に凍結する（RESTART→待機→PAUSE→cursor0）。手順の根拠は
+                    #    _freeze_media_at_zero を参照。
+                    #    5/1→再発インシデント: 単純な RESTART→PAUSE では PAUSE が効かず warmup
+                    #    中に動画が進み、冒頭5〜10秒が切れていた。
+                    self._freeze_media_at_zero(settings.OBS_MEDIA_SOURCE_NAME)
+                    # 4. エンコーダーがフレームバッファを蓄積するまで静止画(位置0)で待機
                     #    4/30インシデント: 0.012秒で start_stream を呼んで lag 25%, drop 9.7%、
                     #    実効0.5fps しか出ず YouTube に stalled stream と判断され15分後切断
                     logger.info(f"Waiting {MEDIA_BUFFER_WAIT_SEC}s for media buffer to fill (paused at position 0)...")
                     time.sleep(MEDIA_BUFFER_WAIT_SEC)
+                    # 5. 念のため実再生位置を検証し、ズレていたら再凍結する（再発防止の防御層）
+                    self._ensure_media_paused_at_zero(settings.OBS_MEDIA_SOURCE_NAME)
                     logger.info("Media source refreshed and paused at position 0.")
                 except Exception as e:
                     logger.warning(f"Media refresh failed: {e}")
@@ -89,6 +96,58 @@ class OBSClient:
         except Exception as e:
             logger.error(f"Start stream error: {e}")
             return False
+
+    def _freeze_media_at_zero(self, source: str) -> None:
+        """メディアソースを位置0で確実に静止させる。
+
+        OBS の RESTART アクションは非同期で、直後に PAUSE を送ると RESTART の
+        「位置0から再生開始」に PAUSE が負けて再生が止まらない（OBS 28系で実機確認:
+        state=PAUSED のまま cursor が実時間で進む）。RESTART→待機→PAUSE の順にし、
+        さらに set_media_input_cursor で位置を厳密に0へ寄せる。
+        """
+        self.client.trigger_media_input_action(source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART")
+        time.sleep(RESTART_SETTLE_SEC)
+        self.client.trigger_media_input_action(source, "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE")
+        try:
+            self.client.set_media_input_cursor(source, 0)
+        except Exception as e:
+            logger.warning(f"set_media_input_cursor failed (continuing): {e}")
+
+    def _media_cursor_ms(self, source: str):
+        """メディアソースの現在再生位置(ms)を返す。取得不能/不明なら None。"""
+        try:
+            st = self.client.get_media_input_status(source)
+        except Exception as e:
+            logger.warning(f"get_media_input_status failed: {e}")
+            return None
+        raw = getattr(st, "media_cursor", None)
+        if isinstance(raw, (int, float)) and raw >= 0:
+            return int(raw)
+        return None
+
+    def _ensure_media_paused_at_zero(self, source: str, retries: int = 2) -> None:
+        """warmup 後、実再生位置が位置0付近で静止しているか OBS に問い合わせて検証する。
+
+        restart_on_activate などで動画が進んでしまった場合に備え、ズレ(>許容値)を
+        検知したら _freeze_media_at_zero で再凍結する（最大 retries+1 回）。位置が
+        取得できない場合はガードをスキップする（凍結処理で根本対応済みのため fail-safe）。
+        """
+        for attempt in range(retries + 1):
+            cursor = self._media_cursor_ms(source)
+            if cursor is None:
+                logger.warning("Media position unknown; skipping position guard.")
+                return
+            if cursor <= MEDIA_CURSOR_TOLERANCE_MS:
+                logger.info(f"Media verified paused at {cursor}ms (<= {MEDIA_CURSOR_TOLERANCE_MS}ms).")
+                return
+            logger.warning(
+                f"Media drifted to {cursor}ms before stream start; "
+                f"re-freezing at position 0 (attempt {attempt + 1}/{retries + 1})."
+            )
+            self._freeze_media_at_zero(source)
+        logger.error(
+            f"Media still drifted after {retries + 1} attempts; proceeding (head may be slightly cut)."
+        )
 
     def set_scene(self, scene_name):
         if not self.connect():
