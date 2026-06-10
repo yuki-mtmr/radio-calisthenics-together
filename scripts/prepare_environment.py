@@ -19,37 +19,33 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 
 from rct.notify import send_alert_email
 from rct.lockfile import AlreadyRunning, exclusive_run
+from rct.docker_ops import DOCKER_BIN_CANDIDATES as _DOCKER_BIN_CANDIDATES, docker_bin as _docker_bin_impl
+from rct.docker_ops import wait_for_docker as _docker_ops_wait
+from rct.retry import RetryPolicy, run_with_retry
 
 # 多重 trigger plist (06:30/06:40/06:50) が同時起動するのを防ぐ
 LOCK_PATH = Path(project_root) / ".locks" / "prepare.lock"
 
 
 # リトライ設定: 間隔は10秒、20秒、30秒
+# 実使用は (10, 20) のみ。30 は 3 試行目の後に sleep しない仕様のため dead 値。
 RETRY_INTERVALS = [10, 20, 30]
 
 # Docker待機設定
 DOCKER_WAIT_RETRIES = 90  # リトライ回数
 DOCKER_WAIT_INTERVAL = 2  # 各リトライ間隔（秒）
 # 合計タイムアウト: 90回 × 2秒 = 180秒（3分）
-# 3回リトライで最大約9分待機可能
 
 # Docker CLI のフルパス候補。launchd 環境下では PATH に Docker のbinが入って
 # いない場合があるため絶対パスでフォールバック。
 # 5/1インシデント: prepare/monitor が "docker" コマンド見つからず誤通知
-DOCKER_BIN_CANDIDATES = [
-    "/Applications/Docker.app/Contents/Resources/bin/docker",
-    "/usr/local/bin/docker",
-    "/opt/homebrew/bin/docker",
-    "docker",  # PATH fallback
-]
+# docker_ops と値を同期するため re-export する (list 型は既存テストが依存)
+DOCKER_BIN_CANDIDATES = list(_DOCKER_BIN_CANDIDATES)
 
 
 def _docker_bin():
-    """利用可能な docker バイナリパスを返す。"""
-    for path in DOCKER_BIN_CANDIDATES:
-        if path == "docker" or os.path.isfile(path):
-            return path
-    return "docker"  # 最後のフォールバック
+    """利用可能な docker バイナリパスを返す。docker_ops に委譲。"""
+    return _docker_bin_impl(candidates=tuple(DOCKER_BIN_CANDIDATES))
 
 
 def log(message):
@@ -108,68 +104,56 @@ def open_app(app_name):
 
 
 def wait_for_docker():
-    """
-    Dockerの準備完了を待機
+    """Dockerの準備完了を待機。ログ行は FAILURE_PATTERNS grep 契約のため維持。
 
     Returns:
         bool: 準備完了ならTrue、タイムアウトならFalse
     """
     log("Waiting for Docker to be ready...")
-    for i in range(DOCKER_WAIT_RETRIES):
-        try:
-            subprocess.check_call(
-                [_docker_bin(), "info"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            log("Docker is ready.")
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            time.sleep(DOCKER_WAIT_INTERVAL)
+    # ループは docker_ops に委譲。ログ文字列はここに残す (health_monitor.FAILURE_PATTERNS 契約)
+    if _docker_ops_wait(retries=DOCKER_WAIT_RETRIES, interval=DOCKER_WAIT_INTERVAL):
+        log("Docker is ready.")
+        return True
     log("Timed out waiting for Docker.")
     return False
 
 
 def start_docker_with_retry():
-    """
-    Dockerをリトライ付きで起動
+    """Dockerをリトライ付きで起動。retry 基盤 (rct.retry) に委譲。
 
-    リトライ回数: 3回（間隔: 10秒、20秒、30秒）
-    全て失敗した場合、Email通知を送信しFalseを返す。
-
-    Returns:
-        bool: Docker起動成功ならTrue、失敗ならFalse
+    intervals=(10, 20) → 3試行。全て失敗時は Email 通知して False を返す。
+    ログ文・アラート文・返り値は既存テストにピン済み (変更禁止)。
     """
-    # 既に起動している場合（docker infoで確認）
     if is_docker_running():
         log("Docker is already running.")
         return True
 
-    # 最大3回試行
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        log(f"Docker startup attempt {attempt + 1}/{max_attempts}")
-        open_app("Docker")
+    max_attempts = 3  # RetryPolicy(intervals=(10,20)).total_attempts
 
+    def _try_start():
+        open_app("Docker")
         if wait_for_docker():
             log("Docker started successfully.")
             return True
+        raise RuntimeError("Docker failed to start")
 
-        # 最後の試行でなければ、間隔を空けてリトライ
-        if attempt < max_attempts - 1:
-            interval = RETRY_INTERVALS[attempt]
+    def _on_fail(attempt, total, exc):
+        if attempt < total:
+            interval = RETRY_INTERVALS[attempt - 1]
             log(f"Docker failed to start. Retrying in {interval} seconds...")
-            time.sleep(interval)
 
-    # 全て失敗した場合、通知を送信
-    log("ERROR: Docker failed to start after all retries.")
-    send_alert_email(
-        "Docker起動失敗",
-        f"Dockerの起動に{max_attempts}回試行しましたが、全て失敗しました。\n"
-        "手動での確認が必要です。\n\n"
-        f"時刻: {time.strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    return False
+    try:
+        run_with_retry(_try_start, RetryPolicy(intervals=(10, 20)), on_attempt_failure=_on_fail)
+        return True
+    except RuntimeError:
+        log("ERROR: Docker failed to start after all retries.")
+        send_alert_email(
+            "Docker起動失敗",
+            f"Dockerの起動に{max_attempts}回試行しましたが、全て失敗しました。\n"
+            "手動での確認が必要です。\n\n"
+            f"時刻: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        return False
 
 
 OBS_WS_PORT = 4455

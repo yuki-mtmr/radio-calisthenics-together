@@ -20,6 +20,7 @@ sys.path.insert(0, str(project_root / "src"))
 
 from rct.lockfile import AlreadyRunning, exclusive_run
 from rct.notify import send_alert_email
+from rct.docker_ops import wait_for_docker as _docker_ops_wait
 
 DOCKER_BIN = "/Applications/Docker.app/Contents/Resources/bin/docker"
 DOCKER_WAIT_RETRIES = 30
@@ -28,18 +29,8 @@ LOCK_PATH = project_root / ".locks" / "start_stream.lock"
 
 
 def wait_for_docker() -> bool:
-    """Docker daemon が `docker info` に応答するまで待機。最大 60 秒。"""
-    for _ in range(DOCKER_WAIT_RETRIES):
-        try:
-            subprocess.check_call(
-                [DOCKER_BIN, "info"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            time.sleep(DOCKER_WAIT_INTERVAL)
-    return False
+    """Docker daemon が `docker info` に応答するまで待機。最大 60 秒。docker_ops に委譲。"""
+    return _docker_ops_wait(retries=DOCKER_WAIT_RETRIES, interval=DOCKER_WAIT_INTERVAL, bin_path=DOCKER_BIN)
 
 
 def main() -> None:
