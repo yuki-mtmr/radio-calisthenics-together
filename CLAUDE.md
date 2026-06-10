@@ -14,13 +14,15 @@ launchdのplistを操作する際は、以下を必ず守ること：
    ```bash
    launchctl list | grep radio-calisthenics
    ```
-   7つのタスクが全て表示されることを確認：
+   9つのタスクが全て表示されることを確認：
+   - jp.radio-calisthenics-together.orchestrator
    - jp.radio-calisthenics-together.caffeinate
    - jp.radio-calisthenics-together.prepare
-   - jp.radio-calisthenics-together.start
-   - jp.radio-calisthenics-together.stop
    - jp.radio-calisthenics-together.monitor
+   - jp.radio-calisthenics-together.start
    - jp.radio-calisthenics-together.bird
+   - jp.radio-calisthenics-together.verify
+   - jp.radio-calisthenics-together.stop
    - jp.radio-calisthenics-together.obs-restart
 
 3. **plistファイルの場所**
@@ -35,12 +37,14 @@ launchdのplistを操作する際は、以下を必ず守ること：
 launchctl unload ~/Library/LaunchAgents/jp.radio-calisthenics-together.*.plist
 
 # 全てロード（個別に指定）
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.orchestrator.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.caffeinate.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.prepare.plist
-launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.start.plist
-launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.stop.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.monitor.plist
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.start.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.bird.plist
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.verify.plist
+launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.stop.plist
 launchctl load ~/Library/LaunchAgents/jp.radio-calisthenics-together.obs-restart.plist
 
 # 確認
@@ -54,13 +58,22 @@ health_monitor.pyが未ロードのタスクを検出した場合、自動的に
 
 ## スケジュール
 
+multi-trigger は launchd の wake 直後発火取りこぼし対策（2026-05-20 事故）。lock により実行は 1 回に収束する。
+
+- 06:25/06:30/06:35 - orchestrator（prepare→start→stop を 1 プロセスで順序保証。caffeinate 50分を内部保持）
+- 06:30/06:40/06:48 - caffeinate（Macスリープ抑止、22分間ロック保持）
+- 06:30/06:40/06:50 - prepare（Docker/OBS起動 + OBS WebSocket health check）
 - 06:45 - monitor（健全性チェック、YouTubeトークン検証含む）
-- 06:48 - caffeinate（Macスリープ抑止、22分間 = 07:10まで保持）
-- 06:50 - prepare（Docker/OBS起動）
-- 06:59 - start（配信開始）
+- 06:59 - start（配信開始。host wrapper 経由、lock + Docker daemon 待機）
 - 06:59 - bird（鳥オーバーレイ演出をランダム発火、約16分常駐）
-- 07:05 - stop（配信終了）
+- 07:01 - verify（配信中であることを YouTube API で検証、無ければ自動リトライ）
+- 07:05 - stop（配信終了 + 翌日枠予約。host wrapper 経由、lock）
 - 日曜 04:00 - obs-restart（OBS週次再起動、状態腐敗予防）
+
+### plist テンプレートと実体の同期ルール
+
+`config/launchd/` のテンプレートは**インストール済み実体と常に同期**させること。
+2026-06-10 に start/stop テンプレートが事故対応前の「wrapper 無し直接 docker compose 実行」のまま放置されていたことが発覚（install_launchd.sh 再実行で 5/20-21 対策が巻き戻る地雷だった）。plist を変更したら必ずテンプレートにも反映する。
 
 ### スリープ対策
 

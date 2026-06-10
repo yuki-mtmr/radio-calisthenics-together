@@ -27,8 +27,7 @@ def send_alert_email(subject, body):
     msg.attach(MIMEText(body, 'plain'))
 
     try:
-        # Connect to Gmail SMTP server
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
         server.starttls()
         server.login(sender, password)
         text = msg.as_string()

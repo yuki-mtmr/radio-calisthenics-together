@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>jp.radio-calisthenics-together.start</string>
+    <string>jp.radio-calisthenics-together.verify</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{REPO_DIR}}/.venv/bin/python3</string>
-        <string>scripts/start_stream_wrapper.py</string>
+        <string>scripts/verify_stream.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>6</integer>
+        <integer>7</integer>
         <key>Minute</key>
-        <integer>59</integer>
+        <integer>1</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>{{REPO_DIR}}/logs/start_stdout.log</string>
+    <string>{{REPO_DIR}}/logs/verify_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>{{REPO_DIR}}/logs/start_stderr.log</string>
+    <string>{{REPO_DIR}}/logs/verify_stderr.log</string>
     <key>WorkingDirectory</key>
     <string>{{REPO_DIR}}</string>
 </dict>

@@ -6,13 +6,8 @@
     <string>jp.radio-calisthenics-together.stop</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/Docker.app/Contents/Resources/bin/docker</string>
-        <string>compose</string>
-        <string>run</string>
-        <string>--rm</string>
-        <string>rct</string>
-        <string>python</string>
-        <string>scripts/stop_stream.py</string>
+        <string>{{REPO_DIR}}/.venv/bin/python3</string>
+        <string>scripts/stop_stream_wrapper.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
