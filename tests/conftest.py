@@ -6,6 +6,7 @@
 (Docker compose は ./tests を mount するため、tests/ 配下に conftest.py を
 置く必要がある。)
 """
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -14,3 +15,15 @@ for path in (ROOT, ROOT / "src", ROOT / "scripts"):
     p = str(path)
     if p not in sys.path:
         sys.path.insert(0, p)
+
+
+def make_settings(**overrides):
+    """frozen Settings のフィールドを一部差し替えたインスタンスを返す。
+
+    patch.object(settings, 'FIELD', value) は frozen dataclass では
+    FrozenInstanceError になるため、代わりに:
+        patch('rct.obs_client.settings', make_settings(FIELD=value))
+    の形で使う。
+    """
+    from rct.settings import load_settings
+    return dataclasses.replace(load_settings(), **overrides)

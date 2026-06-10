@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from rct.obs_client import OBSClient
 from rct.settings import settings
+from tests.conftest import make_settings
 
 @pytest.fixture
 def mock_obs_client():
@@ -28,7 +29,7 @@ def test_set_scene(mock_obs_client):
 
 def test_start_streaming_with_media_restart(mock_obs_client):
     # Mock settings
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):  # speed up test
             mock_obs_client.start_streaming()
 
@@ -49,7 +50,7 @@ def test_start_streaming_waits_for_media_buffer_after_restart(mock_obs_client):
     """
     from rct.obs_client import MEDIA_BUFFER_WAIT_SEC
 
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep') as mock_sleep:
             mock_obs_client.start_streaming()
 
@@ -63,7 +64,7 @@ def test_start_streaming_pauses_media_during_warmup(mock_obs_client):
     5/1インシデント: warmup 5秒の間に動画が再生され、視聴者には
     冒頭5〜10秒が抜けて見えていた。
     """
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):
             mock_obs_client.start_streaming()
 
@@ -81,7 +82,7 @@ def test_start_streaming_pauses_media_during_warmup(mock_obs_client):
 
 def test_start_streaming_calls_play_after_start_stream(mock_obs_client):
     """PLAY は start_stream の後に呼ばれる（動画が配信開始後に再生開始される）。"""
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):
             mock_obs_client.start_streaming()
 
@@ -114,7 +115,7 @@ def test_media_restart_pause_happen_after_source_enabled(mock_obs_client):
     上書きされる。warmup 中に動画が進んで冒頭5〜10秒が切れていた。enable の後に
     RESTART+PAUSE を送れば、アクティブなソースに対して確実に位置0で凍結できる。
     """
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):
             mock_obs_client.start_streaming()
 
@@ -145,7 +146,7 @@ def test_start_streaming_repauses_when_media_drifted(mock_obs_client):
     drift.media_state = "OBS_MEDIA_STATE_PLAYING"
     mock_obs_client.client.get_media_input_status.return_value = drift
 
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):
             mock_obs_client.start_streaming()
 
@@ -161,7 +162,7 @@ def test_start_streaming_repauses_when_media_drifted(mock_obs_client):
 
 def test_start_streaming_does_not_repause_when_media_at_zero(mock_obs_client):
     """位置ガード: media_cursor が0付近(既定)なら位置を確認するが余計な再送はしない。"""
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):
             mock_obs_client.start_streaming()
 
@@ -202,7 +203,7 @@ def test_freeze_media_at_zero_sequence(mock_obs_client):
 
 def test_start_streaming_seeks_media_cursor_to_zero(mock_obs_client):
     """start_streaming は凍結時に set_media_input_cursor(source, 0) を呼ぶ。"""
-    with patch.object(settings, 'OBS_MEDIA_SOURCE_NAME', 'test_video.mp4'):
+    with patch('rct.obs_client.settings', make_settings(OBS_MEDIA_SOURCE_NAME='test_video.mp4')):
         with patch('rct.obs_client.time.sleep'):
             mock_obs_client.start_streaming()
 

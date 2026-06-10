@@ -26,6 +26,8 @@ class TestSendAlertEmail:
             mock_settings.ALERT_EMAIL_SENDER = "sender@example.com"
             mock_settings.ALERT_EMAIL_PASSWORD = "password123"
             mock_settings.ALERT_EMAIL_RECEIVER = "receiver@example.com"
+            mock_settings.SMTP_HOST = "smtp.gmail.com"
+            mock_settings.SMTP_PORT = 587
 
             mock_server = MagicMock()
             mock_smtp.return_value = mock_server

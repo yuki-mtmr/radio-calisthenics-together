@@ -1,26 +1,72 @@
+from __future__ import annotations
+
 import os
+from dataclasses import dataclass
+from typing import Mapping
+
 from dotenv import load_dotenv
 
-# Load .env file
+# import 時に .env を読み込む (既存の挙動を維持)
 load_dotenv()
 
+
+@dataclass(frozen=True)
 class Settings:
-    OBS_WS_HOST = os.getenv("OBS_WS_HOST", "127.0.0.1")
-    OBS_WS_PORT = int(os.getenv("OBS_WS_PORT", "4455"))
-    OBS_WS_PASSWORD = os.getenv("OBS_WS_PASSWORD", "")
+    OBS_WS_HOST: str = "127.0.0.1"
+    OBS_WS_PORT: int = 4455
+    OBS_WS_PASSWORD: str = ""
 
-    OBS_SCENE_NAME = os.getenv("OBS_SCENE_NAME", "RADIO_TAISO_LOOP")
-    OBS_MEDIA_SOURCE_NAME = os.getenv("OBS_MEDIA_SOURCE_NAME", None)
-    OBS_PROFILE_NAME = os.getenv("OBS_PROFILE_NAME", None)
+    OBS_SCENE_NAME: str = "RADIO_TAISO_LOOP"
+    OBS_MEDIA_SOURCE_NAME: str | None = None
+    OBS_PROFILE_NAME: str | None = None
 
-    LOG_DIR = os.getenv("LOG_DIR", "./logs")
-    YOUTUBE_PRIVACY_STATUS = os.getenv("YOUTUBE_PRIVACY_STATUS", "public")
-    YOUTUBE_RESERVATION_BUFFER_MINUTES = int(os.getenv("YOUTUBE_RESERVATION_BUFFER_MINUTES", "2"))
-    STREAM_START_TIME = os.getenv("STREAM_START_TIME", "07:00")
-    STREAM_STOP_TIME = os.getenv("STREAM_STOP_TIME", "07:05")
+    LOG_DIR: str = "./logs"
+    YOUTUBE_PRIVACY_STATUS: str = "public"
+    YOUTUBE_RESERVATION_BUFFER_MINUTES: int = 2
+    STREAM_START_TIME: str = "07:00"
+    STREAM_STOP_TIME: str = "07:05"
 
-    ALERT_EMAIL_SENDER = os.getenv("ALERT_EMAIL_SENDER", "")
-    ALERT_EMAIL_PASSWORD = os.getenv("ALERT_EMAIL_PASSWORD", "")
-    ALERT_EMAIL_RECEIVER = os.getenv("ALERT_EMAIL_RECEIVER", "")
+    ALERT_EMAIL_SENDER: str = ""
+    ALERT_EMAIL_PASSWORD: str = ""
+    ALERT_EMAIL_RECEIVER: str = ""
 
-settings = Settings()
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+
+
+def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+    """環境変数 (デフォルト os.environ) から Settings を生成する。"""
+    e = env if env is not None else os.environ
+
+    def _str(key: str, default: str) -> str:
+        return e.get(key, default)
+
+    def _int(key: str, default: int) -> int:
+        v = e.get(key)
+        return int(v) if v is not None else default
+
+    def _opt(key: str) -> str | None:
+        return e.get(key) or None
+
+    return Settings(
+        OBS_WS_HOST=_str("OBS_WS_HOST", "127.0.0.1"),
+        OBS_WS_PORT=_int("OBS_WS_PORT", 4455),
+        OBS_WS_PASSWORD=_str("OBS_WS_PASSWORD", ""),
+        OBS_SCENE_NAME=_str("OBS_SCENE_NAME", "RADIO_TAISO_LOOP"),
+        OBS_MEDIA_SOURCE_NAME=_opt("OBS_MEDIA_SOURCE_NAME"),
+        OBS_PROFILE_NAME=_opt("OBS_PROFILE_NAME"),
+        LOG_DIR=_str("LOG_DIR", "./logs"),
+        YOUTUBE_PRIVACY_STATUS=_str("YOUTUBE_PRIVACY_STATUS", "public"),
+        YOUTUBE_RESERVATION_BUFFER_MINUTES=_int("YOUTUBE_RESERVATION_BUFFER_MINUTES", 2),
+        STREAM_START_TIME=_str("STREAM_START_TIME", "07:00"),
+        STREAM_STOP_TIME=_str("STREAM_STOP_TIME", "07:05"),
+        ALERT_EMAIL_SENDER=_str("ALERT_EMAIL_SENDER", ""),
+        ALERT_EMAIL_PASSWORD=_str("ALERT_EMAIL_PASSWORD", ""),
+        ALERT_EMAIL_RECEIVER=_str("ALERT_EMAIL_RECEIVER", ""),
+        SMTP_HOST=_str("SMTP_HOST", "smtp.gmail.com"),
+        SMTP_PORT=_int("SMTP_PORT", 587),
+    )
+
+
+# モジュールレベルインスタンス (後方互換)
+settings = load_settings()
