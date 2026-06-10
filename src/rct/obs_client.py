@@ -29,7 +29,7 @@ class OBSClient:
             logger.error(f"Failed to connect to OBS at {self.host}:{self.port} - {e}")
             return False
 
-    def start_streaming(self):
+    def start_streaming(self, resume_media: bool = True):
         if not self.connect():
             return False
 
@@ -81,8 +81,9 @@ class OBSClient:
             logger.info("Starting stream output...")
             self.client.start_stream()
 
-            # 配信開始後にメディアを再生開始 (視聴者は位置0から見える)
-            if settings.OBS_MEDIA_SOURCE_NAME:
+            # resume_media=True (デフォルト) の場合のみ PLAY を送出する。
+            # False の場合は定刻アンカー方式で呼び出し側が resume_media_playback() を呼ぶ。
+            if settings.OBS_MEDIA_SOURCE_NAME and resume_media:
                 time.sleep(0.5)  # ストリームが安定するまで少し待つ
                 try:
                     self.client.trigger_media_input_action(
@@ -215,6 +216,25 @@ class OBSClient:
             "streaming": streaming,
             "scene": scene
         }
+
+    def resume_media_playback(self, source_name: str) -> bool:
+        """位置0からの再生を開始する。
+
+        定刻アンカー方式 (2026-06-10 頭切れ対策) で、YouTube live 遷移確認後に
+        main() から直接呼び出す seam。PLAY 失敗は False を返すのみで例外を上げない。
+        """
+        try:
+            if not self.connect():
+                return False
+            self.client.trigger_media_input_action(
+                source_name,
+                "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PLAY"
+            )
+            logger.info("Media playback resumed from position 0.")
+            return True
+        except Exception as e:
+            logger.warning(f"Media play resume failed: {e}")
+            return False
 
     def disconnect(self):
         if self.client:
