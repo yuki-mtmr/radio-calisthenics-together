@@ -86,6 +86,10 @@ class OBSClient:
         try:
             self._prepare_scene()
 
+            # 選択動画の反映は必ず凍結シーケンスより前 (リロード後のメディアに凍結がかかる)
+            if settings.OBS_MEDIA_SOURCE_NAME and settings.OBS_MEDIA_FILE_PATH:
+                self.ensure_media_file(settings.OBS_MEDIA_SOURCE_NAME, settings.OBS_MEDIA_FILE_PATH)
+
             if settings.OBS_MEDIA_SOURCE_NAME:
                 self._refresh_and_freeze_media(settings.OBS_MEDIA_SOURCE_NAME)
             else:
@@ -232,6 +236,44 @@ class OBSClient:
             "scene": scene
         }
 
+    def get_current_media_file(self, source_name: str) -> str | None:
+        """メディアソースに現在設定されている local_file を返す。取得不能なら None。"""
+        try:
+            if not self.connect():
+                return None
+            resp = self.client.get_input_settings(source_name)
+            value = resp.input_settings.get("local_file")
+            return value if isinstance(value, str) and value else None
+        except Exception as e:
+            logger.warning(f"get_current_media_file failed: {e}")
+            return None
+
+    def ensure_media_file(self, source_name: str, file_path: str) -> bool | None:
+        """メディアソースの local_file を file_path へ同期する (動画選択機能)。
+
+        戻り値: True=切り替えた / False=既に一致 (no-op) / None=失敗。
+        例外は伝播させない (朝の自動配信を壊さないフェイルセーフ)。
+        切り替え後の settle は直後に走る _refresh_and_freeze_media
+        (hide→show→RESTART→PAUSE→buffer→位置検証) が兼ねるため、待機は入れない。
+        現在値が取得できなくても set は試みる (overlay merge なので安全)。
+        """
+        try:
+            if not self.connect():
+                return None
+            current = self.get_current_media_file(source_name)
+            if current == file_path:
+                logger.info(f"Media file already set: {file_path}")
+                return False
+            # overlay=True 必須: False だと looping / restart_on_activate 等が初期値に戻る
+            self.client.set_input_settings(
+                source_name, {"local_file": file_path, "is_local_file": True}, True
+            )
+            logger.info(f"Media file switched: {current} -> {file_path}")
+            return True
+        except Exception as e:
+            logger.warning(f"ensure_media_file failed (keeping current media): {e}")
+            return None
+
     def resume_media_playback(self, source_name: str) -> bool:
         """位置0からの再生を開始する (定刻アンカー方式で定刻に呼び出す)。"""
         try:
@@ -249,4 +291,10 @@ class OBSClient:
 
     def disconnect(self):
         if self.client:
+            try:
+                # WebSocket を明示クローズする (GUI が10秒毎に短命クライアントを
+                # 作るため、参照破棄だけではソケットがリークする)
+                self.client.disconnect()
+            except Exception:
+                pass
             self.client = None

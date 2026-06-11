@@ -19,6 +19,9 @@ class Settings:
     OBS_SCENE_NAME: str = "RADIO_TAISO_LOOP"
     OBS_MEDIA_SOURCE_NAME: str | None = None
     OBS_PROFILE_NAME: str | None = None
+    # 配信動画のホスト絶対パス (OBS=ホストプロセスが開くため)。
+    # None/空なら従来どおり OBS 内の設定をそのまま使う (opt-in)。
+    OBS_MEDIA_FILE_PATH: str | None = None
 
     LOG_DIR: str = "./logs"
     YOUTUBE_PRIVACY_STATUS: str = "public"
@@ -55,6 +58,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         OBS_SCENE_NAME=_str("OBS_SCENE_NAME", "RADIO_TAISO_LOOP"),
         OBS_MEDIA_SOURCE_NAME=_opt("OBS_MEDIA_SOURCE_NAME"),
         OBS_PROFILE_NAME=_opt("OBS_PROFILE_NAME"),
+        OBS_MEDIA_FILE_PATH=_opt("OBS_MEDIA_FILE_PATH"),
         LOG_DIR=_str("LOG_DIR", "./logs"),
         YOUTUBE_PRIVACY_STATUS=_str("YOUTUBE_PRIVACY_STATUS", "public"),
         YOUTUBE_RESERVATION_BUFFER_MINUTES=_int("YOUTUBE_RESERVATION_BUFFER_MINUTES", 2),

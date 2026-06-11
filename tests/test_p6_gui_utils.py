@@ -96,3 +96,33 @@ def test_write_schedule_preserves_other_content(tmp_path):
     assert "StartCalendarInterval" in content
     assert "<integer>7</integer>" in content
     assert "<integer>0</integer>" in content
+
+
+# ------------------------------------ env_file × dotenv ラウンドトリップ特性
+
+
+def test_update_env_values_roundtrips_via_dotenv_with_japanese_and_spaces(tmp_path):
+    """OBS_MEDIA_FILE_PATH に入る日本語+スペースのパスが dotenv 経由で壊れないことを pin する。
+
+    dotenv パーサは引用符なし値でも内部スペース・日本語を保持する（parser.py 確認済み）。
+    将来の python-dotenv 更新で挙動が変わった場合、ここで検知する。
+    """
+    from dotenv import dotenv_values
+    from rct.env_file import update_env_values
+    env = tmp_path / ".env"
+    path_value = "/Users/x/videos/ラジオ体操 第一（通し）.mp4"
+    update_env_values(str(env), {"OBS_MEDIA_FILE_PATH": path_value})
+    assert dotenv_values(str(env))["OBS_MEDIA_FILE_PATH"] == path_value
+
+
+def test_read_env_value_agrees_with_dotenv_for_path_values(tmp_path):
+    """GUI (read_env_value) とコンテナ (dotenv/load_dotenv) が同じ値を読むことを保証する。"""
+    from dotenv import dotenv_values
+    from rct.env_file import read_env_value, update_env_values
+    env = tmp_path / ".env"
+    path_value = "/Users/x/videos/ラジオ体操 第一（通し）.mp4"
+    update_env_values(str(env), {"OBS_MEDIA_FILE_PATH": path_value})
+    assert read_env_value(str(env), "OBS_MEDIA_FILE_PATH", "") == path_value
+    assert read_env_value(str(env), "OBS_MEDIA_FILE_PATH", "") == dotenv_values(str(env))[
+        "OBS_MEDIA_FILE_PATH"
+    ]
