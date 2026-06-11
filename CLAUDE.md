@@ -112,3 +112,17 @@ multi-trigger は launchd の wake 直後発火取りこぼし対策（2026-05-2
 docker compose run --rm rct python scripts/bird_director.py \
   --duration 30 --interval 5 --probability 0.5
 ```
+
+## ループ規約 (agent loop)
+
+実装タスクは「実装 → verifier 検証 → PASS まで修正」のループで進める。
+
+1. **開始時**: `docs/agent-rules.md`（過去の失敗から蒸留したルール集）を必ず読む
+2. **ルーブリック**: `docs/rubrics/feature.md` を `docs/rubrics/<タスク名>.md` にコピーし、
+   タスク固有基準を記入してから実装に入る
+3. **テスト失敗時**: 同じ修正を 2 度繰り返さない。再試行の前に必ず根本原因を診断する
+4. **完了の自己判定禁止**: 完了したと思ったら verifier サブエージェントに該当ルーブリックの
+   パスを渡して判定を依頼する。`VERDICT: PASS` が出るまで作業を継続し、完了報告しない
+5. **FAIL 時**: `GAPS:` の各項目に対処してから、再度 verifier に判定を依頼する
+6. **タスク失敗時**: 根本原因の調査後、汎用ルール 1 行に蒸留して `docs/agent-rules.md` に
+   追記する（類似ルールとは統合）
