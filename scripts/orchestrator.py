@@ -25,7 +25,6 @@ from rct.notify import send_alert_email
 logger = setup_logger()
 
 LOCK_PATH = project_root / ".locks" / "orchestrator.lock"
-DOCKER_BIN = "/Applications/Docker.app/Contents/Resources/bin/docker"
 PYTHON_BIN = str(project_root / ".venv" / "bin" / "python3")
 PREPARE_SCRIPT = str(project_root / "scripts" / "prepare_environment.py")
 START_WRAPPER = str(project_root / "scripts" / "start_stream_wrapper.py")

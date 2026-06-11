@@ -226,6 +226,41 @@ def check_youtube_token():
     return None
 
 
+def _launchd_issues():
+    """launchd タスク確認と自動修復。未修復タスクの問題文リストを返す。"""
+    missing = check_launchd_tasks()
+    if not missing:
+        return []
+    logger.info(f"Attempting auto-fix for missing launchd tasks: {missing}")
+    fixed, failed = auto_fix_launchd_tasks()
+    if fixed:
+        logger.info(f"Auto-fixed launchd tasks: {', '.join(fixed)}")
+    if failed:
+        return [f"自動修復失敗のlaunchdタスク: {', '.join(failed)}"]
+    return []
+
+
+def _docker_issues():
+    """Docker 起動状態確認。問題文リストを返す。"""
+    if not check_docker_status():
+        return ["Dockerが起動していません"]
+    return []
+
+
+def _log_issues():
+    """前日ログの失敗パターン確認。問題文リストを返す。"""
+    failures = check_yesterday_logs()
+    if failures:
+        return ["前日のログで失敗パターン検出:\n  - " + "\n  - ".join(failures)]
+    return []
+
+
+def _token_issues():
+    """YouTube トークン検証。問題文リストを返す。"""
+    issue = check_youtube_token()
+    return [issue] if issue else []
+
+
 def run_health_check():
     """
     健全性チェックを実行し、問題があれば自動修復を試み、修復できなければ通知
@@ -233,34 +268,13 @@ def run_health_check():
     Returns:
         bool: 全て正常ならTrue、問題ありならFalse
     """
-    issues = []
+    issues = (
+        _launchd_issues()
+        + _docker_issues()
+        + _log_issues()
+        + _token_issues()
+    )
 
-    # 1. launchdタスク確認と自動修復
-    missing_tasks = check_launchd_tasks()
-    if missing_tasks:
-        logger.info(f"Attempting auto-fix for missing launchd tasks: {missing_tasks}")
-        fixed, failed = auto_fix_launchd_tasks()
-        if failed:
-            issues.append(f"自動修復失敗のlaunchdタスク: {', '.join(failed)}")
-        if fixed:
-            logger.info(f"Auto-fixed launchd tasks: {', '.join(fixed)}")
-
-    # 2. Docker状態確認
-    docker_running = check_docker_status()
-    if not docker_running:
-        issues.append("Dockerが起動していません")
-
-    # 3. 前日ログ確認
-    log_failures = check_yesterday_logs()
-    if log_failures:
-        issues.append(f"前日のログで失敗パターン検出:\n  - " + "\n  - ".join(log_failures))
-
-    # 4. YouTube トークン検証
-    token_issue = check_youtube_token()
-    if token_issue:
-        issues.append(token_issue)
-
-    # 問題があれば通知
     if issues:
         subject = "健全性チェック警告"
         body = (
@@ -269,7 +283,6 @@ def run_health_check():
             + "\n".join(f"- {issue}" for issue in issues)
             + f"\n\n時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-
         logger.warning(f"Health check found issues: {issues}")
         send_alert_email(subject, body)
         return False
