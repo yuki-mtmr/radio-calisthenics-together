@@ -27,6 +27,24 @@ LIVE_POLL_INTERVAL_SEC = 2     # lifeCycleStatus ポーリング間隔
 LIVE_POLL_MAX_POLLS = 60       # ポーリング上限 (= 120 秒、定刻超過ガードが先に発動する想定)
 
 
+def _find_or_create_broadcast(yt, now: datetime):
+    """当日の upcoming 枠を探し、なければ作成して返す。"""
+    now_date_str = now.strftime('%Y/%m/%d')
+    target_title = f"みんなでラジオ体操 ({now_date_str}"
+
+    for item in yt.list_upcoming_broadcasts():
+        if target_title in item['snippet']['title']:
+            logger.info(f"Found existing upcoming broadcast: {item['snippet']['title']}")
+            return item
+
+    title = f"みんなでラジオ体操 ({now.strftime('%Y/%m/%d %H:%M')})"
+    description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"
+    start_iso = (datetime.utcnow() + timedelta(minutes=1)).isoformat() + 'Z'
+    broadcast = yt.create_broadcast(title, description, start_time_iso=start_iso, privacy_status=settings.YOUTUBE_PRIVACY_STATUS)
+    logger.info(f"New YouTube Broadcast created. ID: {broadcast['id']}")
+    return broadcast
+
+
 def _setup_youtube_broadcast():
     """YouTube broadcast + stream をリトライ付きで準備する。
 
@@ -37,25 +55,7 @@ def _setup_youtube_broadcast():
         try:
             yt = YouTubeClient()
             now = datetime.now()
-            now_date_str = now.strftime('%Y/%m/%d')
-            target_title = f"みんなでラジオ体操 ({now_date_str}"
-
-            upcoming = yt.list_upcoming_broadcasts()
-            broadcast = None
-            for item in upcoming:
-                if target_title in item['snippet']['title']:
-                    broadcast = item
-                    logger.info(f"Found existing upcoming broadcast: {broadcast['snippet']['title']}")
-                    break
-
-            if not broadcast:
-                now_dt = datetime.now()
-                title = f"みんなでラジオ体操 ({now_dt.strftime('%Y/%m/%d %H:%M')})"
-                description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"
-                start_iso = (datetime.utcnow() + timedelta(minutes=1)).isoformat() + 'Z'
-                broadcast = yt.create_broadcast(title, description, start_time_iso=start_iso, privacy_status=settings.YOUTUBE_PRIVACY_STATUS)
-                logger.info(f"New YouTube Broadcast created. ID: {broadcast['id']}")
-
+            broadcast = _find_or_create_broadcast(yt, now)
             stream = yt.create_stream(f"Stream {now.strftime('%H:%M:%S')}")
             yt.bind_broadcast(broadcast['id'], stream['id'])
             stream_key = stream['cdn']['ingestionInfo']['streamName']

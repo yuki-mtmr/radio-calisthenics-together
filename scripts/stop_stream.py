@@ -27,6 +27,19 @@ def stop_obs_streaming():
     return False
 
 
+def _tomorrow_start_iso(tomorrow: datetime, start_time_str: str) -> str:
+    """翌日の配信開始時刻を UTC ISO 文字列で返す (JST -9h 変換)。
+
+    引数:
+        tomorrow: 翌日の datetime (時刻は任意、date 部分のみ使用)
+        start_time_str: "HH:MM" 形式の JST 開始時刻
+    """
+    start_h, start_m = start_time_str.split(':')
+    next_start_jst = tomorrow.replace(hour=int(start_h), minute=int(start_m), second=0, microsecond=0)
+    next_start_utc = next_start_jst - timedelta(hours=9)
+    return next_start_utc.isoformat() + 'Z'
+
+
 def schedule_tomorrow_broadcast():
     """翌日の YouTube 配信枠を予約する。今日の残骸枠があれば削除する。"""
     yt = YouTubeClient()
@@ -47,10 +60,7 @@ def schedule_tomorrow_broadcast():
         return
 
     logger.info("Scheduling next day's broadcast...")
-    start_h, start_m = settings.STREAM_START_TIME.split(':')
-    next_start_jst = tomorrow.replace(hour=int(start_h), minute=int(start_m), second=0, microsecond=0)
-    next_start_utc = next_start_jst - timedelta(hours=9)
-    next_start_iso = next_start_utc.isoformat() + 'Z'
+    next_start_iso = _tomorrow_start_iso(tomorrow, settings.STREAM_START_TIME)
 
     title = f"みんなでラジオ体操 ({next_date_str} {settings.STREAM_START_TIME})"
     description = "毎朝の自動配信ラジオ体操です。今日も一日元気に過ごしましょう！"

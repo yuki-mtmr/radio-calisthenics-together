@@ -1,6 +1,7 @@
 import os
 import pickle
 import time
+from pathlib import Path
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -20,48 +21,67 @@ class YouTubeClient:
         self.token_path = token_path
         self.youtube = self._get_service()
 
+    def _load_cached_creds(self):
+        """保存済みトークンを読み込む。ファイルがなければ None。"""
+        if not os.path.exists(self.token_path):
+            return None
+        with open(self.token_path, 'rb') as f:
+            return pickle.load(f)
+
+    def _refresh_creds_with_retry(self, creds):
+        """期限切れトークンをリトライ付きでリフレッシュする。全滅時はアラートを送り None を返す。"""
+        last_error = None
+        for attempt in range(1, TOKEN_REFRESH_MAX_RETRIES + 1):
+            try:
+                creds.refresh(Request())
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Token refresh attempt {attempt}/{TOKEN_REFRESH_MAX_RETRIES} failed: {e}")
+                if attempt < TOKEN_REFRESH_MAX_RETRIES:
+                    logger.info(f"Retrying in {TOKEN_REFRESH_RETRY_DELAY}s...")
+                    time.sleep(TOKEN_REFRESH_RETRY_DELAY)
+
+        if last_error:
+            logger.error(f"Token refresh failed after {TOKEN_REFRESH_MAX_RETRIES} attempts")
+            repo_root = Path(__file__).resolve().parents[2]
+            send_alert_email(
+                "Token Refresh Failed",
+                f"YouTubeトークンの自動更新に{TOKEN_REFRESH_MAX_RETRIES}回リトライしましたが失敗しました。\n\n"
+                f"最後のエラー: {last_error}\n\n"
+                "以下のコマンドで再認証してください:\n"
+                f"cd {repo_root}\n"
+                ".venv/bin/python scripts/authenticate_youtube.py"
+            )
+            return None
+
+        return creds
+
+    def _run_new_auth_flow(self):
+        """新規認証フローを実行して creds を返す。"""
+        if not os.path.exists(self.credentials_path):
+            logger.error(f"Credentials file not found at {self.credentials_path}")
+            raise FileNotFoundError(f"Please place your client_secrets.json in {self.credentials_path}")
+        flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
+        # Note: This will require browser interaction on first run
+        # For Docker, we'll need to run this on host once to get the token.pickle
+        return flow.run_local_server(port=0)
+
+    def _save_creds(self, creds):
+        """トークンをファイルに保存する。"""
+        with open(self.token_path, 'wb') as f:
+            pickle.dump(creds, f)
+
     def _get_service(self):
-        creds = None
-        if os.path.exists(self.token_path):
-            with open(self.token_path, 'rb') as token:
-                creds = pickle.load(token)
+        creds = self._load_cached_creds()
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                last_error = None
-                for attempt in range(1, TOKEN_REFRESH_MAX_RETRIES + 1):
-                    try:
-                        creds.refresh(Request())
-                        last_error = None
-                        break
-                    except Exception as e:
-                        last_error = e
-                        logger.warning(f"Token refresh attempt {attempt}/{TOKEN_REFRESH_MAX_RETRIES} failed: {e}")
-                        if attempt < TOKEN_REFRESH_MAX_RETRIES:
-                            logger.info(f"Retrying in {TOKEN_REFRESH_RETRY_DELAY}s...")
-                            time.sleep(TOKEN_REFRESH_RETRY_DELAY)
-                if last_error:
-                    logger.error(f"Token refresh failed after {TOKEN_REFRESH_MAX_RETRIES} attempts")
-                    send_alert_email(
-                        "Token Refresh Failed",
-                        f"YouTubeトークンの自動更新に{TOKEN_REFRESH_MAX_RETRIES}回リトライしましたが失敗しました。\n\n"
-                        f"最後のエラー: {last_error}\n\n"
-                        "以下のコマンドで再認証してください:\n"
-                        "cd /Users/yukimatsumori/projects/radio-calisthenics-together\n"
-                        ".venv/bin/python scripts/authenticate_youtube.py"
-                    )
-                    creds = None  # 新規認証へフォールバック
+                creds = self._refresh_creds_with_retry(creds)
             if not creds or not creds.valid:
-                if not os.path.exists(self.credentials_path):
-                    logger.error(f"Credentials file not found at {self.credentials_path}")
-                    raise FileNotFoundError(f"Please place your client_secrets.json in {self.credentials_path}")
-                flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
-                # Note: This will require browser interaction on first run
-                # For Docker, we'll need to run this on host once to get the token.pickle
-                creds = flow.run_local_server(port=0)
-
-            with open(self.token_path, 'wb') as token:
-                pickle.dump(creds, token)
+                creds = self._run_new_auth_flow()
+            self._save_creds(creds)
 
         return build('youtube', 'v3', credentials=creds)
 
