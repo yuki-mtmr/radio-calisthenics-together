@@ -29,54 +29,69 @@ class OBSClient:
             logger.error(f"Failed to connect to OBS at {self.host}:{self.port} - {e}")
             return False
 
+    def _prepare_scene(self) -> None:
+        """配信シーンを切り替える。"""
+        logger.info(f"Preparing scene: {settings.OBS_SCENE_NAME}")
+        self.client.set_current_program_scene(settings.OBS_SCENE_NAME)
+
+    def _refresh_and_freeze_media(self, source: str) -> None:
+        """メディアソースを位置0で凍結しバッファを蓄積する。
+
+        手順: 非表示 → 表示 (restart_on_activate) → RESTART→PAUSE で凍結
+        → MEDIA_BUFFER_WAIT_SEC 待機 → 位置検証。
+        4/30・5/1 インシデント対応コメントは _freeze_media_at_zero 参照。
+        """
+        logger.info(f"Force refreshing media source: '{source}'")
+        try:
+            # 1. 一旦非表示にして描画を止める
+            self.set_scene_item_enabled(settings.OBS_SCENE_NAME, source, False)
+            time.sleep(0.5)
+            # 2. 先に表示（アクティブ化）。restart_on_activate でここで位置0から自動再生。
+            self.set_scene_item_enabled(settings.OBS_SCENE_NAME, source, True)
+            time.sleep(0.3)
+            # 3. 位置0で確実に凍結 (RESTART→待機→PAUSE→cursor0)
+            self._freeze_media_at_zero(source)
+            # 4. エンコーダーがフレームバッファを蓄積するまで待機
+            # 4/30インシデント: 0.012秒で start_stream → lag 25%, drop 9.7%, 実効0.5fps
+            logger.info(f"Waiting {MEDIA_BUFFER_WAIT_SEC}s for media buffer to fill (paused at position 0)...")
+            time.sleep(MEDIA_BUFFER_WAIT_SEC)
+            # 5. 実再生位置を検証、ズレていたら再凍結
+            self._ensure_media_paused_at_zero(source)
+            logger.info("Media source refreshed and paused at position 0.")
+        except Exception as e:
+            logger.warning(f"Media refresh failed: {e}")
+
+    def _force_stop_if_stale(self) -> None:
+        """stale な配信出力があれば強制停止する。
+
+        4/25インシデント: OBS が output_active=True のまま reconnect ループに陥り
+        旧実装が start を呼ばなかった → 新 broadcast に送出されなかった。
+        """
+        status = self.client.get_stream_status()
+        if status.output_active:
+            logger.warning(
+                "Stream is already active (possibly stale state). "
+                "Forcing stop before restart to avoid stuck reconnect loop."
+            )
+            try:
+                self.client.stop_stream()
+            except Exception as e:
+                logger.warning(f"Force stop failed (continuing): {e}")
+            time.sleep(2)
+
     def start_streaming(self, resume_media: bool = True):
         if not self.connect():
             return False
 
         try:
-            logger.info(f"Preparing scene: {settings.OBS_SCENE_NAME}")
-            self.client.set_current_program_scene(settings.OBS_SCENE_NAME)
+            self._prepare_scene()
 
-            # 動画ソースのリセット（上書き対策）
             if settings.OBS_MEDIA_SOURCE_NAME:
-                logger.info(f"Force refreshing media source: '{settings.OBS_MEDIA_SOURCE_NAME}'")
-                try:
-                    # 1. 一旦非表示にして描画を止める（ソースのリフレッシュ）
-                    self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, False)
-                    time.sleep(0.5)
-                    # 2. 先に表示（アクティブ化）する。restart_on_activate(デフォルトON) で
-                    #    ここで動画が位置0から自動再生される。
-                    self.set_scene_item_enabled(settings.OBS_SCENE_NAME, settings.OBS_MEDIA_SOURCE_NAME, True)
-                    time.sleep(0.3)
-                    # 3. 位置0で確実に凍結する（RESTART→待機→PAUSE→cursor0）。手順の根拠は
-                    #    _freeze_media_at_zero を参照。
-                    #    5/1→再発インシデント: 単純な RESTART→PAUSE では PAUSE が効かず warmup
-                    #    中に動画が進み、冒頭5〜10秒が切れていた。
-                    self._freeze_media_at_zero(settings.OBS_MEDIA_SOURCE_NAME)
-                    # 4. エンコーダーがフレームバッファを蓄積するまで静止画(位置0)で待機
-                    #    4/30インシデント: 0.012秒で start_stream を呼んで lag 25%, drop 9.7%、
-                    #    実効0.5fps しか出ず YouTube に stalled stream と判断され15分後切断
-                    logger.info(f"Waiting {MEDIA_BUFFER_WAIT_SEC}s for media buffer to fill (paused at position 0)...")
-                    time.sleep(MEDIA_BUFFER_WAIT_SEC)
-                    # 5. 念のため実再生位置を検証し、ズレていたら再凍結する（再発防止の防御層）
-                    self._ensure_media_paused_at_zero(settings.OBS_MEDIA_SOURCE_NAME)
-                    logger.info("Media source refreshed and paused at position 0.")
-                except Exception as e:
-                    logger.warning(f"Media refresh failed: {e}")
+                self._refresh_and_freeze_media(settings.OBS_MEDIA_SOURCE_NAME)
             else:
                 logger.info("No media source specified for restart.")
 
-            status = self.client.get_stream_status()
-            if status.output_active:
-                logger.warning(
-                    "Stream is already active (possibly stale state). "
-                    "Forcing stop before restart to avoid stuck reconnect loop."
-                )
-                try:
-                    self.client.stop_stream()
-                except Exception as e:
-                    logger.warning(f"Force stop failed (continuing): {e}")
-                time.sleep(2)
+            self._force_stop_if_stale()
 
             logger.info("Starting stream output...")
             self.client.start_stream()
@@ -218,11 +233,7 @@ class OBSClient:
         }
 
     def resume_media_playback(self, source_name: str) -> bool:
-        """位置0からの再生を開始する。
-
-        定刻アンカー方式 (2026-06-10 頭切れ対策) で、YouTube live 遷移確認後に
-        main() から直接呼び出す seam。PLAY 失敗は False を返すのみで例外を上げない。
-        """
+        """位置0からの再生を開始する (定刻アンカー方式で定刻に呼び出す)。"""
         try:
             if not self.connect():
                 return False
