@@ -30,7 +30,7 @@ tools: Read, Grep, Glob, Bash
 3. テストを実行する。ルーブリックに検証コマンドの指定があればそちらを優先し、
    なければ以下を使う:
    ```bash
-   .venv/bin/python -m pytest tests/ --ignore=tests/test_smpl_to_bvh.py -m "not slow" -p no:cacheprovider -q
+   .venv/bin/python -m pytest tests/ -p no:cacheprovider -q
    ```
 4. ルーブリックの基準を上から 1 つずつ、記載された検証方法を**実際に実行して**判定する。
    推測で ✓ を付けない

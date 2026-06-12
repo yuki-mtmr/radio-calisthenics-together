@@ -14,7 +14,14 @@ sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
 from rct.env_file import read_env_value, update_env_values  # noqa: E402
 from rct.plist_schedule import write_schedule  # noqa: E402
-from rct.video_library import list_videos, find_video, is_env_safe_filename  # noqa: E402
+from rct import media_probe  # noqa: E402
+from rct.video_library import (  # noqa: E402
+    MEDIA_CACHE_FILENAME,
+    find_video,
+    format_media_label,
+    is_env_safe_filename,
+    list_videos,
+)
 from rct.obs_client import OBSClient  # noqa: E402
 from rct.docker_ops import docker_bin  # noqa: E402
 
@@ -104,13 +111,17 @@ class App(ctk.CTk):
         video_inner = ctk.CTkFrame(self.settings_frame, fg_color="transparent")
         video_inner.grid(row=6, column=1, padx=20, pady=10, sticky="w")
         self.video_var = ctk.StringVar(value="")
-        self.video_menu = ctk.CTkOptionMenu(video_inner, values=[""], variable=self.video_var, width=270, font=self.font_normal)
+        self.video_menu = ctk.CTkOptionMenu(video_inner, values=[""], variable=self.video_var, width=270, font=self.font_normal, command=self._on_video_selected)
         self.video_menu.pack(side="left")
         self.video_reload_btn = ctk.CTkButton(video_inner, text="再読込", width=64, command=self.reload_video_list, font=self.font_normal)
         self.video_reload_btn.pack(side="left", padx=8)
 
+        # 選択中動画のメタデータ (解像度 / 尺 / 音声有無)
+        self.video_info_label = ctk.CTkLabel(self.settings_frame, text="", font=ctk.CTkFont(size=11), text_color="gray")
+        self.video_info_label.grid(row=7, column=1, padx=20, pady=(0, 4), sticky="w")
+
         self.apply_video_btn = ctk.CTkButton(self.settings_frame, text="この動画に切り替え (次回配信から)", command=self.apply_video_selection, fg_color="#8d5a1f", hover_color="#a86c25", font=self.font_normal)
-        self.apply_video_btn.grid(row=7, column=1, padx=20, pady=(0, 10), sticky="w")
+        self.apply_video_btn.grid(row=8, column=1, padx=20, pady=(0, 10), sticky="w")
 
         # 保存ボタン
         self.save_btn = ctk.CTkButton(self, text="設定を保存して反映 (Macスケジュール更新)", command=self.save_settings, fg_color="#1f538d", font=self.font_normal)
@@ -231,6 +242,21 @@ class App(ctk.CTk):
             self.video_var.set(selected_name)
         elif self.video_var.get() not in names:
             self.video_var.set(names[0])
+        self._update_video_info_label()
+
+    def _on_video_selected(self, _value=None):
+        self._update_video_info_label()
+
+    def _update_video_info_label(self):
+        """選択中動画の解像度/尺/音声有無を表示する (ffprobe はキャッシュ付き)。"""
+        path = find_video(VIDEOS_DIR, self.video_var.get())
+        if path is None:
+            self.video_info_label.configure(text="")
+            return
+        info = media_probe.get_media_info_cached(
+            path, cache_path=Path(VIDEOS_DIR) / MEDIA_CACHE_FILENAME
+        )
+        self.video_info_label.configure(text=format_media_label(info))
 
     def apply_video_selection(self):
         """選択動画を .env に保存し、可能なら OBS に即時反映する。
@@ -249,6 +275,13 @@ class App(ctk.CTk):
         abs_path = str(path.resolve())
         update_env_values(ENV_PATH, {"OBS_MEDIA_FILE_PATH": abs_path})
         self.log(f"選択を保存しました: {name} (次回配信から有効)")
+
+        # 音声埋め込み移行期のガード: 音声なし動画を選んだら警告 (ブロックはしない)
+        info = media_probe.get_media_info_cached(
+            path, cache_path=Path(VIDEOS_DIR) / MEDIA_CACHE_FILENAME
+        )
+        if info is not None and not info.has_audio:
+            self.log("⚠ この動画には音声トラックがありません (OBS 側の別音声ソース運用なら問題ありません)")
 
         def apply_now():
             obs = OBSClient()
