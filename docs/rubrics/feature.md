@@ -6,14 +6,18 @@
 ## 検証コマンド（正）
 
 ```bash
-.venv/bin/python -m pytest tests/ --ignore=tests/test_smpl_to_bvh.py -m "not slow" -p no:cacheprovider -q
+.venv/bin/python -m pytest tests/ -p no:cacheprovider -q
 ```
 
-- 実測: 254 passed / 約 4 分半（2026-06-11）。verifier はループ 1 周ごとにこれを実行する
-- `test_smpl_to_bvh.py` はメイン venv に無い numpy をモジュールレベル import するため除外
-  （モーション生成ドメイン）。`-m "not slow"` は Blender をサブプロセス起動する 2 テストを除外
-- WHAM / BVH / Blender パイプラインを触るタスクでは、タスク固有基準に対象テストの実行を追加すること
-- Docker 代替は現状不可（コンテナに numpy / Blender / WHAM が無い。CI red も同根 — 既知の別課題）
+- 実測: 277 passed / 約 4 分半（2026-06-12 分離後）。verifier はループ 1 周ごとにこれを実行する
+- 2026-06-12: コンテンツ生成系（WHAM / BVH / Blender / mediapipe / 生成 CLI）は
+  `../radio-calisthenics-studio` へ分離した。numpy・Blender 依存テストも同リポジトリへ
+  移動したため、旧来の `--ignore=tests/test_smpl_to_bvh.py` と `-m "not slow"` は不要になった
+- 生成パイプラインを触るタスクは studio リポジトリ側のルーブリックで検証する
+  （このリポジトリの検証対象は配信プレイヤーのみ。studio から `videos/` へ入る mp4 の
+  受け入れ要件は `studio publish` 側が検証する）
+- Docker 代替: `docker compose run --rm rct python -m pytest tests/`
+  （分離により numpy / Blender / WHAM 依存テストが退去し、2026-06-12 に 277 passed で green 確認済み）
 
 ## 必須基準（全タスク共通）
 
