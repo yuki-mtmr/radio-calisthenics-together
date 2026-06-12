@@ -19,12 +19,16 @@ logger = setup_logger()
 YOUTUBE_RETRIES = 3
 YOUTUBE_RETRY_DELAY = 5
 
-# 定刻アンカー方式 (2026-06-10 頭切れ対策)
-# OBS 送出を定刻 PRE_START_LEAD_SEC 秒前に開始し、YouTube の live 遷移を確認してから
-# 定刻ちょうどに位置0で PLAY する。autoStart 遷移ラグ (日次 3〜27s) を吸収する。
-PRE_START_LEAD_SEC = 45        # 送出前倒し幅 (凍結維持で送出 → live 待ち)
+# live 即時 PLAY 方式 (2026-06-12 改訂。旧: 定刻アンカー 2026-06-10)
+# OBS 送出を定刻 PRE_START_LEAD_SEC 秒前に開始し、YouTube の live 遷移を検知したら
+# 即座に位置0で PLAY する (定刻まで待たない)。autoStart 遷移ラグ (日次 3〜27s) を
+# 吸収しつつ、VOD 冒頭の静止フレームをポーリング間隔程度 (~2s) に抑える。
+# (定刻アンカーは頭切れゼロと引き換えに live〜定刻の静止が VOD 冒頭に最大 ~40s 残った)
+PRE_START_LEAD_SEC = 15        # 送出前倒し幅。live 化が定刻近傍に来るよう短縮 (45 だと最大 ~40s 早く始まる)
 LIVE_POLL_INTERVAL_SEC = 2     # lifeCycleStatus ポーリング間隔
-LIVE_POLL_MAX_POLLS = 60       # ポーリング上限 (= 120 秒、定刻超過ガードが先に発動する想定)
+LIVE_POLL_MAX_POLLS = 60       # ポーリング上限 (凍結時計ガード。通常は grace が先に発動する)
+LIVE_GRACE_AFTER_TARGET_SEC = 45  # 定刻後も live を待つ猶予 (観測最大ラグ 27s の ~1.7 倍)。
+                                  # これを超えたら諦めて PLAY し、lock を 07:01 の verify より前に解放する
 
 
 def _find_or_create_broadcast(yt, now: datetime):
@@ -72,23 +76,30 @@ def _setup_youtube_broadcast():
 def _wait_for_broadcast_live(yt, broadcast_id, target_dt, now_fn=None, sleep_fn=None):
     """YouTube の lifeCycleStatus が 'live' になるまでポーリングする。
 
-    - 定刻 (target_dt) を過ぎたら即 False を返して PLAY を遅らせない
+    - live 検知で True (呼び出し側は即 PLAY する。live 前の PLAY は頭切れになるため、
+      定刻を過ぎても LIVE_GRACE_AFTER_TARGET_SEC 秒までは live を待つ)
+    - grace デッドライン超過で False (諦めて PLAY。lock を verify 07:01 より前に解放)
     - API エラーは握り潰して継続 (DNS 瞬断の前例あり)
-    - LIVE_POLL_MAX_POLLS に達したら False (定刻ガードが先に発動する想定)
+    - LIVE_POLL_MAX_POLLS に達したら False (凍結時計ガード)
     """
     _now = now_fn if now_fn is not None else datetime.now
     _sleep = sleep_fn if sleep_fn is not None else time.sleep
 
+    deadline = target_dt + timedelta(seconds=LIVE_GRACE_AFTER_TARGET_SEC)
+
     for _ in range(LIVE_POLL_MAX_POLLS):
-        if _now() >= target_dt:
-            logger.info("Target time reached while polling; proceeding to PLAY.")
+        if _now() >= deadline:
+            logger.warning("Live-wait grace deadline reached; proceeding to PLAY.")
             return False
         try:
             resp = yt.youtube.liveBroadcasts().list(
                 part='status', id=broadcast_id
             ).execute()
             if resp['items'][0]['status']['lifeCycleStatus'] == 'live':
-                logger.info("Broadcast is live. Proceeding to PLAY.")
+                delta = (_now() - target_dt).total_seconds()
+                logger.info(
+                    f"Broadcast is live (target {delta:+.1f}s); proceeding to PLAY immediately."
+                )
                 return True
         except Exception as e:
             logger.debug(f"lifeCycleStatus poll error (continuing): {e}")
@@ -154,7 +165,7 @@ def main():
             )
             wait_seconds = (target_dt - datetime.now()).total_seconds() - PRE_START_LEAD_SEC
             if wait_seconds > 0:
-                logger.info(f"Waiting {wait_seconds:.1f}s to start {PRE_START_LEAD_SEC}s early (live anchor)...")
+                logger.info(f"Waiting {wait_seconds:.1f}s to start {PRE_START_LEAD_SEC}s early (pre-live lead)...")
                 time.sleep(wait_seconds)
             else:
                 logger.info("Skipping pre-start wait (already within lead window).")
@@ -170,22 +181,16 @@ def main():
             except Exception as e:
                 logger.warning(f"Failed to ensure media source visibility: {e}")
 
-        # 凍結維持で送出開始 → live 遷移を待ってから定刻に PLAY
+        # 凍結維持で送出開始 → live 遷移を検知したら即 PLAY
         if not obs.start_streaming(resume_media=False):
             logger.error("Failed to start OBS stream.")
             sys.exit(1)
 
         if target_dt is not None:
-            # YouTube の live 遷移をポーリング
+            # YouTube の live 遷移をポーリング (検知したら定刻を待たずに次へ進む)
             _wait_for_broadcast_live(yt, broadcast['id'], target_dt)
 
-            # 定刻まで残り時間があれば待つ
-            remaining = (target_dt - datetime.now()).total_seconds()
-            if remaining > 0:
-                logger.info(f"Waiting {remaining:.1f}s until target time for PLAY...")
-                time.sleep(remaining)
-
-        # 定刻に位置0から再生開始
+        # live 検知直後に位置0から再生開始 (VOD 冒頭の静止を最小化)
         if settings.OBS_MEDIA_SOURCE_NAME:
             obs.resume_media_playback(settings.OBS_MEDIA_SOURCE_NAME)
 

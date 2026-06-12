@@ -1,18 +1,22 @@
-"""頭切れ hotfix (2026-06-10) の仕様テスト — 定刻アンカー方式。
+"""頭切れ対策の仕様テスト — live 即時 PLAY + grace 方式 (2026-06-12 改訂)。
 
-毎朝 6〜30 秒の頭切れの原因 (2026-06-03〜06-10 の actualStartTime で実測):
-- PLAY が「OBS 送出開始 +0.5s」起点で、YouTube autoStart の live 遷移
-  (日次 3〜27s 変動) を一切待たない
-- 「10 秒前倒し」バッファが媒体凍結シーケンス約 6.4s に食われ実質 3.6s
+経緯:
+- 2026-06-10: 定刻アンカー方式を導入 (送出 45s 前倒し + 定刻 07:00 に PLAY)。
+  頭切れ (日次 3〜27s の autoStart 遷移ラグ) はゼロになったが、
+  live 化から定刻までの静止フレームが VOD 冒頭に最大 ~40s 残った (06-12 朝に顕在化)。
+- 2026-06-12: live 検知で即 PLAY に変更 (ユーザー決定: 開始時刻 ±15s のブレを許容し、
+  VOD 冒頭の静止を ~2〜4s にする)。
 
-対策:
-1. 送出開始を定刻 PRE_START_LEAD_SEC 秒前に前倒し (resume_media=False で凍結維持)
-2. lifeCycleStatus == 'live' をポーリング確認 (API エラーは握り潰して継続)
-3. 定刻に resume_media_playback() で位置 0 から再生開始
+現仕様:
+1. 送出開始を定刻 PRE_START_LEAD_SEC(=15) 秒前に前倒し (resume_media=False で凍結維持)
+2. lifeCycleStatus == 'live' をポーリング (API エラーは握り潰して継続)。
+   定刻を過ぎても LIVE_GRACE_AFTER_TARGET_SEC(=45) 秒までは live を待つ (頭切れ防止の本体)
+3. live 検知したら**即** resume_media_playback() (定刻まで待たない)
+4. grace デッドライン超過 / ポーリング上限で諦めて PLAY (lock を 07:01 の verify より
+   前に必ず解放するため。無期限に待つと verify のリトライが AlreadyRunning で空振りする)
 
 既存互換:
 - start_streaming() のデフォルト (resume_media=True) は完全に従来挙動
-  → tests/test_obs_client.py の 14 テストは無編集で緑のまま
 - _setup_youtube_broadcast は (broadcast, stream_key, yt) の 3-tuple を返す
 """
 from datetime import datetime, timedelta
@@ -106,10 +110,16 @@ def _yt_with_statuses(statuses):
 
 
 def test_lead_constants():
-    """前倒し幅とポーリング設定の凍結値。"""
+    """前倒し幅・grace・ポーリング設定の凍結値。
+
+    PRE_START_LEAD_SEC=15: live 化が定刻近傍に来るよう短縮 (45 だと最大 ~40s 早く始まる)。
+    LIVE_GRACE_AFTER_TARGET_SEC=45: 観測最大ラグ 27s の ~1.7 倍。lock を 07:01 の
+    verify より前に解放するため、これを超えては待たない。
+    """
     import scripts.start_stream as ss
 
-    assert ss.PRE_START_LEAD_SEC == 45
+    assert ss.PRE_START_LEAD_SEC == 15
+    assert ss.LIVE_GRACE_AFTER_TARGET_SEC == 45
     assert ss.LIVE_POLL_INTERVAL_SEC == 2
     assert ss.LIVE_POLL_MAX_POLLS == 60
 
@@ -129,16 +139,38 @@ def test_wait_for_broadcast_live_polls_until_live():
     assert sleep.calls == [2, 2]
 
 
-def test_wait_for_broadcast_live_gives_up_at_target_time():
-    """定刻を過ぎていたら API を呼ばず即 False (定刻 PLAY を遅らせない)。"""
+def test_wait_for_broadcast_live_keeps_polling_past_target_until_live():
+    """定刻を過ぎても grace 内なら live を待ち続ける (頭切れ防止の本体)。
+
+    旧仕様は定刻で即 False → 呼び出し側が live 前に PLAY → ラグが大きい日に頭切れ。
+    新仕様は定刻後も polling を継続し、live 検知で True を返す。
+    """
     from scripts.start_stream import _wait_for_broadcast_live
 
-    yt = MagicMock()
-    target = datetime(2026, 6, 11, 7, 0, 0)
-    after_target = datetime(2026, 6, 11, 7, 0, 1)
+    yt = _yt_with_statuses([_live_resp("ready"), _live_resp("live")])
+    sleep = _SleepRecorder()
+    target = datetime(2026, 6, 12, 7, 0, 0)
+    past_target = datetime(2026, 6, 12, 7, 0, 10)  # 定刻 +10s (grace 45s 内)
 
     assert _wait_for_broadcast_live(
-        yt, "bid", target, now_fn=lambda: after_target, sleep_fn=_SleepRecorder()
+        yt, "bid", target, now_fn=lambda: past_target, sleep_fn=sleep
+    ) is True
+    assert sleep.calls == [2]
+
+
+def test_wait_for_broadcast_live_gives_up_at_grace_deadline():
+    """定刻 + LIVE_GRACE_AFTER_TARGET_SEC を過ぎたら API を呼ばず即 False。
+
+    lock を 07:01 の verify リトライより前に解放するための上限 (無期限に待たない)。
+    """
+    import scripts.start_stream as ss
+
+    yt = MagicMock()
+    target = datetime(2026, 6, 12, 7, 0, 0)
+    at_deadline = target + timedelta(seconds=ss.LIVE_GRACE_AFTER_TARGET_SEC)
+
+    assert ss._wait_for_broadcast_live(
+        yt, "bid", target, now_fn=lambda: at_deadline, sleep_fn=_SleepRecorder()
     ) is False
     yt.youtube.liveBroadcasts.return_value.list.assert_not_called()
 
@@ -172,6 +204,55 @@ def test_wait_for_broadcast_live_hard_cap_prevents_spin():
         now_fn=lambda: fixed_now, sleep_fn=sleep,
     ) is False
     assert len(sleep.calls) == ss.LIVE_POLL_MAX_POLLS
+
+
+def test_main_plays_immediately_after_live_detection():
+    """live 検知後は定刻まで待たずに即 PLAY する (検知と PLAY の間に sleep が入らない)。
+
+    STREAM_START_TIME=23:59 が決定的 RED の肝: 旧仕様 (定刻アンカー) だと live 検知後に
+    23:59 まで sleep(remaining) が入り本テストが fail する。テスト実行時刻に依存しない。
+    """
+    live_detected = {"flag": False}
+
+    def fake_wait(*args, **kwargs):
+        live_detected["flag"] = True
+        return True
+
+    def sleep_guard(seconds):
+        assert not live_detected["flag"], (
+            f"live 検知後に sleep({seconds}) が呼ばれた (即 PLAY 違反)"
+        )
+
+    with patch("scripts.start_stream._is_already_broadcasting", return_value=False), \
+         patch("scripts.start_stream.YouTubeClient") as mock_yt_cls, \
+         patch("scripts.start_stream.OBSClient") as mock_obs_cls, \
+         patch("scripts.start_stream.settings") as mock_settings, \
+         patch("scripts.start_stream._wait_for_broadcast_live", side_effect=fake_wait), \
+         patch("scripts.start_stream.send_alert_email"), \
+         patch("scripts.start_stream.time.sleep", side_effect=sleep_guard):
+
+        mock_settings.STREAM_START_TIME = "23:59"
+        mock_settings.YOUTUBE_PRIVACY_STATUS = "public"
+        mock_settings.OBS_MEDIA_SOURCE_NAME = "vid.mp4"
+        mock_settings.OBS_SCENE_NAME = "scene"
+
+        yt = mock_yt_cls.return_value
+        yt.list_upcoming_broadcasts.return_value = []
+        yt.create_broadcast.return_value = {"id": "bid"}
+        yt.create_stream.return_value = {
+            "id": "sid",
+            "cdn": {"ingestionInfo": {"streamName": "key"}},
+        }
+
+        mock_obs = MagicMock()
+        mock_obs.start_streaming.return_value = True
+        mock_obs_cls.return_value = mock_obs
+
+        from scripts.start_stream import main
+
+        main()
+
+        mock_obs.resume_media_playback.assert_called_once_with("vid.mp4")
 
 
 def test_setup_youtube_broadcast_returns_client():

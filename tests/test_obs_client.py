@@ -249,3 +249,89 @@ def test_stop_streaming_treats_501_as_success(mock_obs_client):
     )
     result = mock_obs_client.stop_streaming()
     assert result is True
+
+
+# ------------------------------------------- ensure_media_file (動画選択機能)
+
+
+def _resp_with_settings(settings_dict):
+    """get_input_settings のレスポンスモック (input_settings 属性に dict)。"""
+    resp = MagicMock()
+    resp.input_settings = settings_dict
+    return resp
+
+
+def test_ensure_media_file_switches_when_path_differs(mock_obs_client):
+    mock_obs_client.client.get_input_settings.return_value = _resp_with_settings(
+        {"local_file": "/old.mp4"}
+    )
+    result = mock_obs_client.ensure_media_file("src", "/videos/new.mp4")
+    assert result is True
+    # overlay=True 必須: False だと looping / restart_on_activate 等が初期値に戻る
+    mock_obs_client.client.set_input_settings.assert_called_once_with(
+        "src", {"local_file": "/videos/new.mp4", "is_local_file": True}, True
+    )
+
+
+def test_ensure_media_file_noop_when_path_already_set(mock_obs_client):
+    """毎朝 06:59 の通常ケース: 既に一致していれば書き込まない (冪等)。"""
+    mock_obs_client.client.get_input_settings.return_value = _resp_with_settings(
+        {"local_file": "/videos/new.mp4"}
+    )
+    result = mock_obs_client.ensure_media_file("src", "/videos/new.mp4")
+    assert result is False
+    mock_obs_client.client.set_input_settings.assert_not_called()
+
+
+def test_ensure_media_file_returns_none_and_never_raises_on_error(mock_obs_client):
+    """WS エラーでも例外を伝播させない (朝の自動配信を壊さないフェイルセーフ)。"""
+    mock_obs_client.client.get_input_settings.side_effect = Exception("WS down")
+    mock_obs_client.client.set_input_settings.side_effect = Exception("WS down")
+    result = mock_obs_client.ensure_media_file("src", "/videos/new.mp4")
+    assert result is None
+
+
+def test_get_current_media_file_returns_local_file(mock_obs_client):
+    mock_obs_client.client.get_input_settings.return_value = _resp_with_settings(
+        {"local_file": "/v.mp4"}
+    )
+    assert mock_obs_client.get_current_media_file("src") == "/v.mp4"
+
+
+def test_get_current_media_file_returns_none_on_error(mock_obs_client):
+    mock_obs_client.client.get_input_settings.side_effect = Exception("WS down")
+    assert mock_obs_client.get_current_media_file("src") is None
+
+
+def test_start_streaming_ensures_media_file_before_freeze(mock_obs_client):
+    """OBS_MEDIA_FILE_PATH 設定時、シーン準備後・凍結シーケンス前に local_file を同期する。
+
+    凍結シーケンス (hide→show→RESTART→PAUSE→buffer→位置検証) がリロード後の
+    メディアにかかるよう、差し替えは必ず凍結より前 (2026-06-10 頭切れ対策の保護)。
+    """
+    mock_obs_client.client.get_input_settings.return_value = _resp_with_settings(
+        {"local_file": "/old.mp4"}
+    )
+    with patch('rct.obs_client.settings', make_settings(
+        OBS_MEDIA_SOURCE_NAME='test_video.mp4', OBS_MEDIA_FILE_PATH='/videos/new.mp4'
+    )):
+        with patch('rct.obs_client.time.sleep'):
+            mock_obs_client.start_streaming()
+
+    names = [c[0] for c in mock_obs_client.client.method_calls]
+    scene_idx = names.index("set_current_program_scene")
+    set_input_idx = names.index("set_input_settings")
+    first_enable_idx = names.index("set_scene_item_enabled")  # 凍結シーケンスの先頭 (hide)
+    start_idx = names.index("start_stream")
+    assert scene_idx < set_input_idx < first_enable_idx < start_idx
+
+
+def test_start_streaming_skips_media_file_when_unset(mock_obs_client):
+    """OBS_MEDIA_FILE_PATH 未設定なら従来動作と完全一致 (opt-in 保証)。"""
+    with patch('rct.obs_client.settings', make_settings(
+        OBS_MEDIA_SOURCE_NAME='test_video.mp4', OBS_MEDIA_FILE_PATH=None
+    )):
+        with patch('rct.obs_client.time.sleep'):
+            mock_obs_client.start_streaming()
+
+    mock_obs_client.client.set_input_settings.assert_not_called()
