@@ -53,3 +53,71 @@ def test_is_env_safe_filename():
     assert not is_env_safe_filename("pad.mp4 ")
     assert not is_env_safe_filename("a\nb.mp4")
     assert not is_env_safe_filename("")
+
+
+# ---------------------- メタデータ付き列挙 (Phase1 生成パイプライン) ----------
+
+
+def _sentinel_info(**overrides):
+    from rct.media_probe import MediaInfo
+    base = dict(
+        width=1920,
+        height=1080,
+        duration_sec=207.6,
+        has_audio=True,
+        video_codec="h264",
+        audio_codec="aac",
+        fps=30.0,
+    )
+    return MediaInfo(**{**base, **overrides})
+
+
+def test_list_videos_with_info_pairs_paths_with_probe(tmp_path, monkeypatch):
+    from rct import media_probe
+    from rct.video_library import list_videos_with_info
+    (tmp_path / "b.mp4").touch()
+    (tmp_path / "a.mp4").touch()
+    sentinel = _sentinel_info()
+    seen = []
+
+    def fake(path, *, cache_path=None, runner=None):
+        seen.append(cache_path)
+        return sentinel
+
+    monkeypatch.setattr(media_probe, "get_media_info_cached", fake)
+    result = list_videos_with_info(tmp_path)
+    assert [(p.name, info) for p, info in result] == [("a.mp4", sentinel), ("b.mp4", sentinel)]
+    # キャッシュは videos ディレクトリ直下の隠しファイル (list_videos からは除外される)
+    assert all(c == tmp_path / ".media_meta.json" for c in seen)
+
+
+def test_list_videos_with_info_probe_failure_gives_none(tmp_path, monkeypatch):
+    from rct import media_probe
+    from rct.video_library import list_videos_with_info
+    (tmp_path / "a.mp4").touch()
+    monkeypatch.setattr(media_probe, "get_media_info_cached", lambda *a, **k: None)
+    result = list_videos_with_info(tmp_path)
+    assert len(result) == 1
+    assert result[0][1] is None
+
+
+def test_format_media_label_full():
+    from rct.video_library import format_media_label
+    assert format_media_label(_sentinel_info()) == "1920×1080 / 3:28 / 音声あり"
+
+
+def test_format_media_label_no_audio():
+    from rct.video_library import format_media_label
+    info = _sentinel_info(width=1280, height=720, duration_sec=60.0, has_audio=False, audio_codec=None)
+    assert format_media_label(info) == "1280×720 / 1:00 / 音声なし"
+
+
+def test_format_media_label_unknown_duration():
+    from rct.video_library import format_media_label
+    info = _sentinel_info(duration_sec=None)
+    assert format_media_label(info) == "1920×1080 / -:-- / 音声あり"
+
+
+def test_format_media_label_none():
+    from rct.video_library import format_media_label
+    assert format_media_label(None) == "メタデータ取得不可"
