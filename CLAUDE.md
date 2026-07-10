@@ -86,6 +86,16 @@ multi-trigger は launchd の wake 直後発火取りこぼし対策（2026-05-2
    ```
    設定済か確認: `pmset -g sched`
 
+## OBS エンコーダ要件 (2026-07-10 事故由来)
+
+- Simple 出力の `StreamEncoder=apple_h264`（Apple VT ハードウェア）を必須とする。
+  x264（CPU）は他プロセスとの CPU 競合でフレーム破棄が起きる
+  （2026-07-10: Docker 再起動直後の日中配信で encoding skip 46.7% のカクカク VOD が公開された）。
+- 設定場所: `~/Library/Application Support/obs-studio/basic/profiles/無題/basic.ini` の `[SimpleOutput]`。
+  OBS 28.x は simple 出力で apple_h264 非対応（黙って x264 に巻き戻す）。OBS 32.x 以降を使う。
+- 配信停止後、`stop_stream_wrapper` が OBS ログの lag/skip 統計を自動チェックし、
+  5% 超でアラートメールを送る（`rct.obs_quality`）。
+
 ## 鳥オーバーレイ演出 (bird overlay)
 
 配信中、ランダムな確率で鳥が画面を横切る。
