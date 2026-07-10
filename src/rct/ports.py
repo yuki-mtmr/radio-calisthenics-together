@@ -19,7 +19,7 @@ class AlertSink(Protocol):
 
 
 class BroadcastLister(Protocol):
-    """YouTube 配信枠の参照系。実体は YouTubeClient。"""
+    """YouTube 配信枠の参照系。実体は youtube_autopost.YouTubeClient (vendor, rct.youtube.make_youtube_client 経由)。"""
 
     def list_upcoming_broadcasts(self) -> list[dict]: ...
 
@@ -29,7 +29,7 @@ class BroadcastLister(Protocol):
 
 
 class BroadcastScheduler(Protocol):
-    """YouTube 配信枠の作成・削除。実体は YouTubeClient。"""
+    """YouTube 配信枠の作成・削除。実体は youtube_autopost.YouTubeClient (vendor, rct.youtube.make_youtube_client 経由)。"""
 
     def create_broadcast(
         self,
@@ -43,7 +43,7 @@ class BroadcastScheduler(Protocol):
 
 
 class StreamBinder(Protocol):
-    """YouTube live stream の作成と broadcast への bind。実体は YouTubeClient。"""
+    """YouTube live stream の作成と broadcast への bind。実体は youtube_autopost.YouTubeClient (vendor, rct.youtube.make_youtube_client 経由)。"""
 
     def create_stream(self, title: str) -> dict: ...
 

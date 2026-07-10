@@ -2,7 +2,7 @@
 
 既存 3 箇所の手書きリトライを一元化する:
 - start_stream: RetryPolicy.fixed(3, 5)
-- youtube_client token refresh: RetryPolicy.fixed(5, 30)
+- youtube_autopost.YouTubeClient token refresh (vendor 内部、独自リトライ実装): 5 回 x 30 秒
 - prepare_environment docker: RetryPolicy(intervals=(10, 20))
 
 timing 契約:

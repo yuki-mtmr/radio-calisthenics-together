@@ -76,3 +76,4 @@ archive/
 # Pipeline outputs and large binary assets
 /output/
 *.vrm
+config/youtube/token.json

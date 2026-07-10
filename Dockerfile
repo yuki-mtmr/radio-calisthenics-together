@@ -4,12 +4,15 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy source code and scripts
+COPY vendor/ ./vendor/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY pyproject.toml .
 
-# Install dependencies (and the package itself)
-RUN pip install --no-cache-dir .
+# Install vendored youtube-autopost wheel first (private repo, not on PyPI),
+# then install dependencies (and the package itself)
+RUN pip install --no-cache-dir vendor/*.whl \
+ && pip install --no-cache-dir .
 
 # Ensure logs directory exists
 RUN mkdir -p logs

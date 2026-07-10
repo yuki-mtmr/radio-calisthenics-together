@@ -1,39 +1,14 @@
-import os
-import pickle
-import sys
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+#!/usr/bin/env python3
+"""初回 OAuth 認証。youtube-autopost ライブラリの auth CLI に委譲する薄いラッパー。
 
-# Add src to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+トークンは authorized_user JSON 形式で config/youtube/token.json に保存される
+(旧 token.pickle 形式ではない)。既存の token.pickle からの移行が必要な場合は
+scripts/migrate_youtube_token.py を先に実行すること。
 
-from rct.logger import setup_logger
-
-logger = setup_logger()
-
-SCOPES = ['https://www.googleapis.com/auth/youtube.force-ssl']
-
-def main():
-    creds_path = 'config/youtube/client_secrets.json'
-    token_path = 'config/youtube/token.pickle'
-
-    if not os.path.exists(creds_path):
-        print(f"Error: {creds_path} not found.")
-        return
-
-    flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-
-    # This will open a browser window for authentication
-    print("Opening browser for Google authentication...")
-    print("If the browser doesn't open, follow the instructions in the console.")
-
-    creds = flow.run_local_server(port=0)
-
-    # Save the credentials for the next run
-    with open(token_path, 'wb') as token:
-        pickle.dump(creds, token)
-
-    print(f"Successfully authenticated! Token saved to {token_path}")
+Usage:
+    .venv/bin/python scripts/authenticate_youtube.py
+"""
+from youtube_autopost.auth_cli import main as auth_cli_main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(auth_cli_main())

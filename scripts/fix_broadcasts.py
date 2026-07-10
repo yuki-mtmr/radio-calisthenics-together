@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 # Add src to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from rct.youtube_client import YouTubeClient
+from rct.youtube import make_youtube_client as YouTubeClient
 from rct.settings import settings
 from rct.logger import setup_logger
 

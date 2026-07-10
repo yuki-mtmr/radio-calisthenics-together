@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root / "src"))
 
 from rct.logger import setup_logger
 from rct.notify import send_alert_email
-from rct.youtube_client import YouTubeClient
+from rct.youtube import make_youtube_client as YouTubeClient
 
 logger = setup_logger()
 
