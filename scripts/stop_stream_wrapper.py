@@ -15,15 +15,21 @@ sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "src"))
 
 from rct.lockfile import AlreadyRunning, exclusive_run
+from rct.deadline import install_deadline, register_child
 
 DOCKER_BIN = "/Applications/Docker.app/Contents/Resources/bin/docker"
 LOCK_PATH = project_root / ".locks" / "stop_stream.lock"
+DEADLINE_SECONDS = 15 * 60  # 7/7 wedge インシデント対策: 15 分でハングを強制終了
 
 
 def main() -> None:
+    install_deadline(DEADLINE_SECONDS, "stop_stream_wrapper")
     try:
         with exclusive_run(LOCK_PATH):
-            result = subprocess.run(
+            # HIGH: deadline (SIGALRM) は自プロセスしか止められない。start_new_session=True
+            # で子プロセス自身に pgid を持たせ、register_child で登録することで
+            # deadline 発火時に compose run ごと killpg できるようにする。
+            proc = subprocess.Popen(
                 [
                     DOCKER_BIN,
                     "compose",
@@ -34,8 +40,10 @@ def main() -> None:
                     "scripts/stop_stream.py",
                 ],
                 cwd=str(project_root),
+                start_new_session=True,
             )
-            sys.exit(result.returncode)
+            register_child(proc)
+            sys.exit(proc.wait())
     except AlreadyRunning:
         print(
             "stop_stream_wrapper: already running (multi-trigger guard), skipping.",

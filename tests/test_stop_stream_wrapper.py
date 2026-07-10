@@ -14,6 +14,24 @@ project_root = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(project_root, "scripts"))
 
 
+def test_main_installs_15_minute_deadline():
+    """A3: 7/7 wedge インシデント対策。15分でハングを強制終了する deadline。"""
+    import stop_stream_wrapper as wrapper
+
+    with patch("stop_stream_wrapper.install_deadline") as mock_install, \
+         patch("stop_stream_wrapper.exclusive_run") as mock_lock, \
+         patch("stop_stream_wrapper.subprocess.Popen") as mock_popen, \
+         patch("stop_stream_wrapper.register_child"):
+        mock_lock.return_value.__enter__.return_value = None
+        mock_lock.return_value.__exit__.return_value = False
+        mock_popen.return_value.wait.return_value = 0
+
+        with pytest.raises(SystemExit):
+            wrapper.main()
+
+        mock_install.assert_called_once_with(15 * 60, "stop_stream_wrapper")
+
+
 def test_main_skips_when_already_running():
     """別 trigger が既に動いていれば exit 0 で skip"""
     from rct.lockfile import AlreadyRunning
@@ -21,7 +39,7 @@ def test_main_skips_when_already_running():
     import stop_stream_wrapper as wrapper
 
     with patch("stop_stream_wrapper.exclusive_run") as mock_lock, \
-         patch("stop_stream_wrapper.subprocess.run") as mock_run:
+         patch("stop_stream_wrapper.subprocess.Popen") as mock_popen:
         mock_lock.return_value.__enter__.side_effect = AlreadyRunning("locked")
         mock_lock.return_value.__exit__.return_value = False
 
@@ -29,7 +47,7 @@ def test_main_skips_when_already_running():
             wrapper.main()
 
         assert exc_info.value.code == 0
-        mock_run.assert_not_called()
+        mock_popen.assert_not_called()
 
 
 def test_main_runs_compose_when_lock_available():
@@ -37,19 +55,22 @@ def test_main_runs_compose_when_lock_available():
     import stop_stream_wrapper as wrapper
 
     with patch("stop_stream_wrapper.exclusive_run") as mock_lock, \
-         patch("stop_stream_wrapper.subprocess.run") as mock_run:
+         patch("stop_stream_wrapper.subprocess.Popen") as mock_popen, \
+         patch("stop_stream_wrapper.register_child") as mock_register:
         mock_lock.return_value.__enter__.return_value = None
         mock_lock.return_value.__exit__.return_value = False
-        mock_run.return_value.returncode = 0
+        mock_popen.return_value.wait.return_value = 0
 
         with pytest.raises(SystemExit) as exc_info:
             wrapper.main()
 
         assert exc_info.value.code == 0
-        mock_run.assert_called_once()
-        called_args = mock_run.call_args[0][0]
+        mock_popen.assert_called_once()
+        called_args = mock_popen.call_args[0][0]
         assert "compose" in called_args
         assert "stop_stream.py" in called_args[-1]
+        assert mock_popen.call_args[1].get("start_new_session") is True
+        mock_register.assert_called_once_with(mock_popen.return_value)
 
 
 def test_main_propagates_compose_returncode():
@@ -57,10 +78,11 @@ def test_main_propagates_compose_returncode():
     import stop_stream_wrapper as wrapper
 
     with patch("stop_stream_wrapper.exclusive_run") as mock_lock, \
-         patch("stop_stream_wrapper.subprocess.run") as mock_run:
+         patch("stop_stream_wrapper.subprocess.Popen") as mock_popen, \
+         patch("stop_stream_wrapper.register_child"):
         mock_lock.return_value.__enter__.return_value = None
         mock_lock.return_value.__exit__.return_value = False
-        mock_run.return_value.returncode = 2
+        mock_popen.return_value.wait.return_value = 2
 
         with pytest.raises(SystemExit) as exc_info:
             wrapper.main()

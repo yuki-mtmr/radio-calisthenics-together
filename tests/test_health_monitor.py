@@ -20,6 +20,20 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 sys.path.insert(0, os.path.join(project_root, 'scripts'))
 
 
+@pytest.fixture(autouse=True)
+def _mock_stale_watchdog(request):
+    """A4: stale process watchdog は既定で no-op にする (実 ps/kill を叩かない)。
+
+    check_stale_processes 自体の挙動を検証する TestCheckStaleProcesses では
+    パッチしない (対象そのものを差し替えると検証できないため)。
+    """
+    if request.cls is not None and request.cls.__name__ == "TestCheckStaleProcesses":
+        yield
+        return
+    with patch('health_monitor.check_stale_processes', return_value=[]):
+        yield
+
+
 class TestCheckLaunchdTasks:
     """check_launchd_tasks 関数のテスト"""
 
@@ -74,13 +88,14 @@ class TestCheckLaunchdTasks:
 
 
 class TestCheckDockerStatus:
-    """check_docker_status 関数のテスト"""
+    """check_docker_status 関数のテスト
+
+    A4: docker_ops の timeout 付き is_docker_ready に委譲する (7/7 wedge 対策)。
+    """
 
     def test_docker_running(self):
         """Dockerが起動している場合、Trueを返すことをテスト"""
-        with patch('health_monitor.subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-
+        with patch('health_monitor.is_docker_ready', return_value=True):
             import health_monitor
             result = health_monitor.check_docker_status()
 
@@ -88,23 +103,79 @@ class TestCheckDockerStatus:
 
     def test_docker_not_running(self):
         """Dockerが起動していない場合、Falseを返すことをテスト"""
-        with patch('health_monitor.subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=1)
-
+        with patch('health_monitor.is_docker_ready', return_value=False):
             import health_monitor
             result = health_monitor.check_docker_status()
 
             assert result is False
 
     def test_docker_command_error(self):
-        """dockerコマンドがエラーを返す場合、Falseを返すことをテスト"""
-        with patch('health_monitor.subprocess.run') as mock_run:
-            mock_run.side_effect = FileNotFoundError("docker not found")
-
+        """is_docker_ready が想定外の例外を投げても、Falseを返すことをテスト"""
+        with patch('health_monitor.is_docker_ready', side_effect=FileNotFoundError("docker not found")):
             import health_monitor
             result = health_monitor.check_docker_status()
 
             assert result is False
+
+    def test_docker_status_uses_timeout_aware_is_docker_ready(self):
+        """docker_ops.is_docker_ready (timeout 付き) へ委譲していることを確認する。"""
+        with patch('health_monitor.is_docker_ready') as mock_ready:
+            mock_ready.return_value = True
+
+            import health_monitor
+            health_monitor.check_docker_status()
+
+            mock_ready.assert_called_once()
+
+
+class TestCheckStaleProcesses:
+    """check_stale_processes 関数のテスト (A4: stale process watchdog)。"""
+
+    def test_no_stale_processes_returns_empty(self):
+        with patch('health_monitor.watchdog.run_stale_process_watchdog', return_value=[]):
+            import health_monitor
+            assert health_monitor.check_stale_processes() == []
+
+    def test_stale_process_killed_returns_issue_message(self):
+        killed = [{"pid": 123, "name": "orchestrator.py", "age_seconds": 8000, "command": "..."}]
+        with patch('health_monitor.watchdog.run_stale_process_watchdog', return_value=killed):
+            import health_monitor
+            issues = health_monitor.check_stale_processes()
+
+            assert len(issues) == 1
+            assert "orchestrator.py" in issues[0]
+            assert "123" in issues[0]
+
+    def test_uses_own_pid_as_self_pid(self):
+        with patch('health_monitor.watchdog.run_stale_process_watchdog', return_value=[]) as mock_run, \
+             patch('health_monitor.os.getpid', return_value=4242):
+            import health_monitor
+            health_monitor.check_stale_processes()
+
+            mock_run.assert_called_once()
+            assert mock_run.call_args.kwargs.get("self_pid") == 4242
+
+
+class TestStaleProcessIssuesRunFirst:
+    """run_health_check の実行順序契約: stale watchdog は他チェックより先に走る。
+
+    他チェックがハングしても水際で殺せる順序が重要 (7/7 インシデントの教訓)。
+    """
+
+    def test_stale_check_runs_before_docker_check(self):
+        call_order = []
+        with patch('health_monitor.send_alert_email'), \
+             patch('health_monitor.check_stale_processes', side_effect=lambda: call_order.append("stale") or []), \
+             patch('health_monitor.check_launchd_tasks', return_value=[]), \
+             patch('health_monitor.check_docker_status',
+                   side_effect=lambda: call_order.append("docker") or True), \
+             patch('health_monitor.check_yesterday_logs', return_value=[]), \
+             patch('health_monitor.check_youtube_token', return_value=None):
+
+            import health_monitor
+            health_monitor.run_health_check()
+
+            assert call_order[0] == "stale"
 
 
 class TestCheckYesterdayLogs:
@@ -210,6 +281,18 @@ class TestCheckYoutubeToken:
             result = health_monitor.check_youtube_token()
             assert result is not None
             assert "client_secrets" in result
+
+
+class TestDeadlineWiring:
+    """A3: 7/7 wedge インシデント対策。10分でハングを強制終了する deadline。"""
+
+    def test_main_installs_10_minute_deadline(self):
+        with patch('health_monitor.install_deadline') as mock_install, \
+             patch('health_monitor.run_health_check', return_value=True):
+            import health_monitor
+            health_monitor.main()
+
+            mock_install.assert_called_once_with(10 * 60, "health_monitor")
 
 
 class TestRunHealthCheck:

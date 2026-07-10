@@ -39,11 +39,19 @@ def docker_bin(
     return "docker"
 
 
-def is_docker_ready(
+DEFAULT_READY_TIMEOUT = 15  # 秒。7/7 wedge インシデント対策 (無期限 check_call 禁止)
+
+
+def is_docker_ready_detailed(
     bin_path: str,
     check_call: Callable = None,
-) -> bool:
-    """docker info が成功すれば True。CalledProcessError / FileNotFoundError は False。"""
+    timeout: float = DEFAULT_READY_TIMEOUT,
+) -> str:
+    """docker info の結果を 'ready' | 'error' | 'timeout' で区別して返す。
+
+    timeout は wedge (プロセス生存・応答なし) 検出の土台。呼び出し側が
+    'timeout' を他の失敗と区別できることで docker_recovery の wedge 判定に使える。
+    """
     _check_call = check_call if check_call is not None else subprocess.check_call
 
     try:
@@ -51,10 +59,25 @@ def is_docker_ready(
             [bin_path, "info"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=timeout,
         )
-        return True
+        return "ready"
+    except subprocess.TimeoutExpired:
+        return "timeout"
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+        return "error"
+
+
+def is_docker_ready(
+    bin_path: str,
+    check_call: Callable = None,
+    timeout: float = DEFAULT_READY_TIMEOUT,
+) -> bool:
+    """docker info が成功すれば True。CalledProcessError / FileNotFoundError / TimeoutExpired は False。"""
+    return (
+        is_docker_ready_detailed(bin_path, check_call=check_call, timeout=timeout)
+        == "ready"
+    )
 
 
 def wait_for_docker(

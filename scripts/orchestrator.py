@@ -21,9 +21,13 @@ sys.path.insert(0, str(project_root / "src"))
 from rct.lockfile import AlreadyRunning, exclusive_run
 from rct.logger import setup_logger
 from rct.notify import send_alert_email
+from rct.deadline import install_deadline, register_child
 
 logger = setup_logger()
 
+DEADLINE_SECONDS = 100 * 60  # 7/7 wedge インシデント対策 + 子 deadline 予算不足修正:
+# 子 deadline 合計 65 分 (prepare 20 + start 30 + stop 15) + 固定時刻 sleep (06:25 起動〜07:05
+# 停止で最大 40 分待ち得る) + マージンを賄うため 75 分から 100 分へ引き上げ。
 LOCK_PATH = project_root / ".locks" / "orchestrator.lock"
 PYTHON_BIN = str(project_root / ".venv" / "bin" / "python3")
 PREPARE_SCRIPT = str(project_root / "scripts" / "prepare_environment.py")
@@ -51,19 +55,31 @@ def _sleep_until(target_dt: datetime) -> None:
         time.sleep(wait)
 
 
+def _run_subprocess(args: list) -> int:
+    """子プロセスを start_new_session=True で起動し、deadline に登録して完了を待つ。
+
+    HIGH: deadline (SIGALRM) は自プロセスしか止められない。docker compose run 等の
+    子プロセスは start_new_session=True で自身の pgid を持たせ、rct.deadline に
+    登録することで deadline 発火時に killpg でプロセスグループごと殺せるようにする。
+    """
+    proc = subprocess.Popen(args, start_new_session=True)
+    register_child(proc)
+    return proc.wait()
+
+
 def _run_prepare() -> None:
     logger.info("orchestrator: running prepare_environment.py")
-    subprocess.run([PYTHON_BIN, PREPARE_SCRIPT], check=False)
+    _run_subprocess([PYTHON_BIN, PREPARE_SCRIPT])
 
 
 def _run_start() -> None:
     logger.info("orchestrator: running start_stream_wrapper.py")
-    subprocess.run([PYTHON_BIN, START_WRAPPER], check=False)
+    _run_subprocess([PYTHON_BIN, START_WRAPPER])
 
 
 def _run_stop() -> None:
     logger.info("orchestrator: running stop_stream_wrapper.py")
-    subprocess.run([PYTHON_BIN, STOP_WRAPPER], check=False)
+    _run_subprocess([PYTHON_BIN, STOP_WRAPPER])
 
 
 def _run_full_flow() -> None:
@@ -76,6 +92,7 @@ def _run_full_flow() -> None:
 
 
 def main() -> None:
+    install_deadline(DEADLINE_SECONDS, "orchestrator")
     try:
         with exclusive_run(LOCK_PATH):
             logger.info("orchestrator: lock acquired, starting flow")

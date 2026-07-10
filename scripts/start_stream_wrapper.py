@@ -21,11 +21,13 @@ sys.path.insert(0, str(project_root / "src"))
 from rct.lockfile import AlreadyRunning, exclusive_run
 from rct.notify import send_alert_email
 from rct.docker_ops import wait_for_docker as _docker_ops_wait
+from rct.deadline import install_deadline, register_child
 
 DOCKER_BIN = "/Applications/Docker.app/Contents/Resources/bin/docker"
 DOCKER_WAIT_RETRIES = 30
 DOCKER_WAIT_INTERVAL = 2  # 30 × 2 = 60 秒
 LOCK_PATH = project_root / ".locks" / "start_stream.lock"
+DEADLINE_SECONDS = 30 * 60  # 7/7 wedge インシデント対策: 30 分でハングを強制終了
 
 
 def wait_for_docker() -> bool:
@@ -39,6 +41,7 @@ def main() -> None:
     5/21 インシデント: 2 つの start_stream が並走 → OBS が同時に
     2 つの start_streaming コマンドを受け取りクラッシュ。
     """
+    install_deadline(DEADLINE_SECONDS, "start_stream_wrapper")
     try:
         with exclusive_run(LOCK_PATH):
             _run_with_docker()
@@ -64,7 +67,10 @@ def _run_with_docker() -> None:
             print(f"alert email failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    result = subprocess.run(
+    # HIGH: deadline (SIGALRM) は自プロセスしか止められない。start_new_session=True で
+    # 子プロセス自身に pgid を持たせ、register_child で deadline に登録することで
+    # deadline 発火時に compose run ごと killpg できるようにする。
+    proc = subprocess.Popen(
         [
             DOCKER_BIN,
             "compose",
@@ -75,8 +81,10 @@ def _run_with_docker() -> None:
             "scripts/start_stream.py",
         ],
         cwd=str(project_root),
+        start_new_session=True,
     )
-    sys.exit(result.returncode)
+    register_child(proc)
+    sys.exit(proc.wait())
 
 
 if __name__ == "__main__":

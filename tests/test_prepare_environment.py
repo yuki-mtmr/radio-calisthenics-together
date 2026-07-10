@@ -93,6 +93,38 @@ class TestIsDockerRunning:
 
             assert result is False
 
+    def test_docker_not_running_on_timeout(self):
+        """docker info がタイムアウトした場合、Falseを返すことをテスト（7/7 wedge対策）。
+
+        timeout なしの check_call は無期限ハングし得るため、docker_ops.is_docker_ready
+        (timeout 付き) への委譲を検証する。
+        """
+        with patch('subprocess.check_call') as mock_check_call:
+            import importlib
+            import prepare_environment
+            importlib.reload(prepare_environment)
+
+            mock_check_call.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=15)
+
+            result = prepare_environment.is_docker_running()
+
+            assert result is False
+
+    def test_is_docker_running_delegates_to_docker_ops_is_ready(self):
+        """is_docker_running が docker_ops.is_docker_ready (timeout 付き) に委譲する。"""
+        import importlib
+        import prepare_environment
+        importlib.reload(prepare_environment)
+
+        with patch('prepare_environment._docker_ops_is_ready') as mock_is_ready, \
+             patch('prepare_environment._docker_bin', return_value="/resolved/docker"):
+            mock_is_ready.return_value = True
+
+            result = prepare_environment.is_docker_running()
+
+            assert result is True
+            mock_is_ready.assert_called_once_with("/resolved/docker")
+
 
 class TestOpenApp:
     """open_app 関数のテスト"""
@@ -249,6 +281,8 @@ class TestStartDockerWithRetry:
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
              patch('prepare_environment.is_docker_running') as mock_is_docker, \
+             patch('prepare_environment.docker_recovery.check_wedge_and_recover',
+                   return_value='not_wedged'), \
              patch('time.sleep') as mock_sleep:
 
             mock_is_docker.return_value = False
@@ -271,6 +305,8 @@ class TestStartDockerWithRetry:
              patch('prepare_environment.wait_for_docker') as mock_wait, \
              patch('prepare_environment.open_app') as mock_open, \
              patch('prepare_environment.is_docker_running') as mock_is_docker, \
+             patch('prepare_environment.docker_recovery.check_wedge_and_recover',
+                   return_value='not_wedged'), \
              patch('time.sleep') as mock_sleep:
 
             mock_is_docker.return_value = False
@@ -282,6 +318,74 @@ class TestStartDockerWithRetry:
             # リトライ間隔を確認（10秒、20秒のみ。3回目の後は待機しない）
             sleep_calls = [call[0][0] for call in mock_sleep.call_args_list]
             assert sleep_calls == [10, 20]
+
+
+class TestDockerWedgeRecovery:
+    """A2: 7/7 wedge インシデント対策。全リトライ失敗後の wedge 自動復旧。"""
+
+    def test_recovery_success_short_circuits_failure_alert(self):
+        """wedge 検出・復旧成功なら Docker起動失敗 通知は送らず True を返す
+        (代わりに wedge 復旧を知らせる別件名のアラートを送る)。"""
+        with patch('prepare_environment.send_alert_email') as mock_notify, \
+             patch('prepare_environment.wait_for_docker') as mock_wait, \
+             patch('prepare_environment.open_app') as mock_open, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
+             patch('prepare_environment.docker_recovery.check_wedge_and_recover',
+                   return_value='recovered') as mock_check, \
+             patch('time.sleep'):
+
+            mock_is_docker.return_value = False
+            mock_wait.return_value = False
+
+            import prepare_environment
+            result = prepare_environment.start_docker_with_retry()
+
+            assert result is True
+            mock_check.assert_called_once()
+            mock_notify.assert_called_once()
+            assert mock_notify.call_args[0][0] != "Docker起動失敗"
+
+    def test_recovery_failed_still_sends_original_failure_alert(self):
+        """wedge 検出したが復旧失敗 → 既存の Docker起動失敗 アラートは維持 (契約凍結)。"""
+        with patch('prepare_environment.send_alert_email') as mock_notify, \
+             patch('prepare_environment.wait_for_docker') as mock_wait, \
+             patch('prepare_environment.open_app') as mock_open, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
+             patch('prepare_environment.docker_recovery.check_wedge_and_recover',
+                   return_value='recovery_failed') as mock_check, \
+             patch('time.sleep'):
+
+            mock_is_docker.return_value = False
+            mock_wait.return_value = False
+
+            import prepare_environment
+            result = prepare_environment.start_docker_with_retry()
+
+            assert result is False
+            mock_check.assert_called_once()
+            # 最後に呼ばれた通知は既存契約の件名 (2 回目の呼び出しが最新)
+            assert mock_notify.call_args[0][0] == "Docker起動失敗"
+
+    def test_not_wedged_behaves_like_before(self):
+        """wedge でなければ既存の失敗フローのみ (通知 1 回)。"""
+        with patch('prepare_environment.send_alert_email') as mock_notify, \
+             patch('prepare_environment.wait_for_docker') as mock_wait, \
+             patch('prepare_environment.open_app') as mock_open, \
+             patch('prepare_environment.is_docker_running') as mock_is_docker, \
+             patch('prepare_environment.docker_recovery.check_wedge_and_recover',
+                   return_value='not_wedged') as mock_check, \
+             patch('time.sleep'):
+
+            mock_is_docker.return_value = False
+            mock_wait.return_value = False
+
+            import prepare_environment
+            result = prepare_environment.start_docker_with_retry()
+
+            assert result is False
+            mock_check.assert_called_once()
+            mock_notify.assert_called_once()
+            assert mock_notify.call_args[0][0] == "Docker起動失敗"
 
 
 class TestMain:
@@ -379,6 +483,23 @@ class TestObsHealthCheck:
 
             mock_open.assert_called_with("OBS")
             mock_run.assert_not_called()
+
+
+class TestDeadlineWiring:
+    """A3: 7/7 wedge インシデント対策。20分でハングを強制終了する deadline。"""
+
+    def test_main_installs_20_minute_deadline(self):
+        import prepare_environment
+
+        with patch('prepare_environment.install_deadline') as mock_install, \
+             patch('prepare_environment._run_preparation'), \
+             patch('prepare_environment.exclusive_run') as mock_lock:
+            mock_lock.return_value.__enter__.return_value = None
+            mock_lock.return_value.__exit__.return_value = False
+
+            prepare_environment.main()
+
+            mock_install.assert_called_once_with(20 * 60, "prepare_environment")
 
 
 class TestExclusiveRunGuard:

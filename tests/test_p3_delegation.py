@@ -26,28 +26,23 @@ def test_health_monitor_has_no_standalone_docker_bin_candidates():
 
 
 def test_health_monitor_check_docker_status_uses_docker_ops_bin():
-    """check_docker_status が docker_ops.docker_bin() で解決したパスを使う。"""
+    """check_docker_status が docker_ops.is_docker_ready へ bin 解決込みで委譲する。
+
+    リファクタ後は health_monitor が subprocess.run を直接呼ばず、
+    docker_ops.docker_bin() で解決したパスを is_docker_ready(bin_path=...) に渡す。
+    """
     import importlib
     import health_monitor
     importlib.reload(health_monitor)
 
-    calls = []
-
-    def fake_check_call(cmd, **kwargs):
-        calls.append(cmd)
-        return 0
-
-    with patch("rct.docker_ops.subprocess.check_call", side_effect=fake_check_call), \
-         patch("health_monitor.subprocess.run") as mock_run:
-        # check_docker_status は subprocess.run を使うが、bin 解決は docker_ops を経由する
-        mock_run.return_value = MagicMock(returncode=0)
+    with patch("health_monitor.is_docker_ready") as mock_is_ready, \
+         patch("health_monitor._docker_bin", return_value="/resolved/docker") as mock_bin:
+        mock_is_ready.return_value = True
         result = health_monitor.check_docker_status()
 
     assert result is True
-    # docker info コマンドが呼ばれ、末尾が "info"
-    called_cmd = mock_run.call_args[0][0]
-    assert called_cmd[-1] == "info"
-    assert called_cmd[0].endswith("docker")
+    mock_bin.assert_called_once()
+    mock_is_ready.assert_called_once_with(bin_path="/resolved/docker")
 
 
 # ---------------------------------------------------------- prepare_environment
@@ -137,6 +132,8 @@ def test_start_stream_wrapper_compose_array_unchanged():
     """compose-run 引数配列はバイト一致で維持される。
 
     start_stream_wrapper のテストがこの配列を assert するため凍結。
+    HIGH 対策 (deadline が子プロセスを殺せない問題) で subprocess.run から
+    start_new_session=True の Popen に変わったため、patch 先も Popen に追従する。
     """
     import importlib
     import start_stream_wrapper
@@ -144,9 +141,10 @@ def test_start_stream_wrapper_compose_array_unchanged():
 
     expected_bin = "/Applications/Docker.app/Contents/Resources/bin/docker"
     with patch("start_stream_wrapper.wait_for_docker", return_value=True), \
-         patch("start_stream_wrapper.subprocess.run") as mock_run, \
+         patch("start_stream_wrapper.subprocess.Popen") as mock_popen, \
+         patch("start_stream_wrapper.register_child"), \
          patch("start_stream_wrapper.exclusive_run") as mock_lock:
-        mock_run.return_value = MagicMock(returncode=0)
+        mock_popen.return_value.wait.return_value = 0
         mock_lock.return_value.__enter__.return_value = None
         mock_lock.return_value.__exit__.return_value = False
 
@@ -155,7 +153,7 @@ def test_start_stream_wrapper_compose_array_unchanged():
         except SystemExit:
             pass
 
-    actual_cmd = mock_run.call_args[0][0]
+    actual_cmd = mock_popen.call_args[0][0]
     assert actual_cmd == [
         expected_bin, "compose", "run", "--rm", "rct", "python", "scripts/start_stream.py"
     ]

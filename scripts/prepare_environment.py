@@ -21,7 +21,13 @@ from rct.notify import send_alert_email
 from rct.lockfile import AlreadyRunning, exclusive_run
 from rct.docker_ops import DOCKER_BIN_CANDIDATES as _DOCKER_BIN_CANDIDATES, docker_bin as _docker_bin_impl
 from rct.docker_ops import wait_for_docker as _docker_ops_wait
+from rct.docker_ops import is_docker_ready_detailed as _docker_ops_is_ready_detailed
+from rct.docker_ops import is_docker_ready as _docker_ops_is_ready
 from rct.retry import RetryPolicy, run_with_retry
+from rct import docker_recovery
+from rct.deadline import install_deadline
+
+DEADLINE_SECONDS = 20 * 60  # 7/7 wedge インシデント対策: 20 分でハングを強制終了
 
 # 多重 trigger plist (06:30/06:40/06:50) が同時起動するのを防ぐ
 LOCK_PATH = Path(project_root) / ".locks" / "prepare.lock"
@@ -76,20 +82,15 @@ def is_docker_running():
     Dockerデーモンが起動中か確認
 
     docker infoコマンドで確認する。pgrep -x Dockerは不正確
-    （Docker Desktopのプロセス名は「com.docker.backend」等のため）
+    （Docker Desktopのプロセス名は「com.docker.backend」等のため）。
+
+    7/7 wedge インシデント対策: timeout なしの check_call は無期限ハングし得るため、
+    docker_ops.is_docker_ready (timeout 付き) へ委譲する。
 
     Returns:
         bool: Dockerが応答可能ならTrue
     """
-    try:
-        subprocess.check_call(
-            [_docker_bin(), "info"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+    return _docker_ops_is_ready(_docker_bin())
 
 
 def open_app(app_name):
@@ -118,10 +119,57 @@ def wait_for_docker():
     return False
 
 
+def _attempt_wedge_recovery():
+    """A2: 全リトライ失敗後、Docker backend の wedge (プロセス生存・応答なし)
+    かどうかを判定し、wedge なら強制再起動で復旧を試みる。
+
+    Returns:
+        bool: 復旧できた (呼び出し側は起動成功として扱ってよい) なら True。
+              wedge でない、または復旧に失敗した場合は False
+              (既存の失敗フローへ継続させる)。
+    """
+    bin_path = _docker_bin()
+
+    def _is_ready_detailed():
+        return _docker_ops_is_ready_detailed(bin_path=bin_path)
+
+    def _wait_ready():
+        return _docker_ops_wait(retries=DOCKER_WAIT_RETRIES, interval=DOCKER_WAIT_INTERVAL, bin_path=bin_path)
+
+    result = docker_recovery.check_wedge_and_recover(
+        is_ready_detailed=_is_ready_detailed,
+        is_backend_alive=docker_recovery.is_backend_process_alive,
+        restart=docker_recovery.force_restart_docker,
+        wait_ready=_wait_ready,
+    )
+
+    if result == "recovered":
+        log("Docker wedge detected. Force restart recovered it.")
+        send_alert_email(
+            "Docker wedge検出・自動復旧",
+            "Docker backend が応答なし (wedge) 状態を検出し、強制再起動して復旧しました。\n\n"
+            f"時刻: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        return True
+
+    if result == "recovery_failed":
+        log("Docker wedge detected but force restart did not recover it.")
+        send_alert_email(
+            "Docker wedge検出・復旧失敗",
+            "Docker backend の wedge (応答なし) 状態を検出し強制再起動しましたが、"
+            "復旧できませんでした。手動での確認が必要です。\n\n"
+            f"時刻: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        return False
+
+    return False
+
+
 def start_docker_with_retry():
     """Dockerをリトライ付きで起動。retry 基盤 (rct.retry) に委譲。
 
-    intervals=(10, 20) → 3試行。全て失敗時は Email 通知して False を返す。
+    intervals=(10, 20) → 3試行。全て失敗時は wedge 復旧を試み、それでも
+    ダメなら Email 通知して False を返す。
     ログ文・アラート文・返り値は既存テストにピン済み (変更禁止)。
     """
     if is_docker_running():
@@ -146,6 +194,8 @@ def start_docker_with_retry():
         run_with_retry(_try_start, RetryPolicy(intervals=(10, 20)), on_attempt_failure=_on_fail)
         return True
     except RuntimeError:
+        if _attempt_wedge_recovery():
+            return True
         log("ERROR: Docker failed to start after all retries.")
         send_alert_email(
             "Docker起動失敗",
@@ -218,6 +268,7 @@ def _run_preparation():
 
 def main():
     """multi-trigger guard 付きエントリポイント"""
+    install_deadline(DEADLINE_SECONDS, "prepare_environment")
     try:
         with exclusive_run(LOCK_PATH):
             _run_preparation()

@@ -23,10 +23,14 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 
 from rct.notify import send_alert_email
 from rct.logger import setup_logger
-from rct.youtube_client import YouTubeClient
-from rct.docker_ops import DOCKER_BIN_CANDIDATES, docker_bin as _docker_bin
+from rct.youtube import make_youtube_client as YouTubeClient
+from rct.docker_ops import DOCKER_BIN_CANDIDATES, docker_bin as _docker_bin, is_docker_ready
+from rct.deadline import install_deadline
+from rct import watchdog
 
 logger = setup_logger()
+
+DEADLINE_SECONDS = 10 * 60  # 7/7 wedge インシデント対策: 10 分でハングを強制終了
 
 # 必須のlaunchdタスク
 REQUIRED_LAUNCHD_TASKS = [
@@ -147,19 +151,34 @@ def check_docker_status():
     """
     Docker daemonの起動状態を確認
 
+    A4: docker_ops.is_docker_ready (timeout 付き) へ委譲する。
+    7/7 インシデント: timeout なしの docker info 呼び出しがハングし、この
+    ヘルスチェック自体が固まる原因になった。
+
     Returns:
         bool: 起動中ならTrue
     """
     try:
-        result = subprocess.run(
-            [_docker_bin(), "info"],
-            capture_output=True,
-            text=True
-        )
-        return result.returncode == 0
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        return is_docker_ready(bin_path=_docker_bin())
+    except Exception as e:  # noqa: BLE001 — 想定外の例外もヘルスチェックとしては False
         logger.warning(f"Docker check failed: {e}")
         return False
+
+
+def check_stale_processes():
+    """A4: stale process watchdog。2 時間超のハングプロセスを強制終了する。
+
+    7/7 インシデント: ハングした prepare_environment.py が flock を握ったまま
+    3 日間生存し、以降の全 trigger が AlreadyRunning で弾かれ続けた。
+    """
+    killed = watchdog.run_stale_process_watchdog(self_pid=os.getpid(), alert_fn=lambda _: None)
+    if not killed:
+        return []
+
+    details = ", ".join(
+        f"{proc['name']}(pid={proc['pid']}, {proc['age_seconds']}s)" for proc in killed
+    )
+    return [f"stale プロセスを検出し強制終了しました: {details}"]
 
 
 def check_yesterday_logs():
@@ -226,6 +245,11 @@ def check_youtube_token():
     return None
 
 
+def _stale_process_issues():
+    """stale watchdog の問題文リストを返す。他チェックより先に実行する契約。"""
+    return check_stale_processes()
+
+
 def _launchd_issues():
     """launchd タスク確認と自動修復。未修復タスクの問題文リストを返す。"""
     missing = check_launchd_tasks()
@@ -268,8 +292,10 @@ def run_health_check():
     Returns:
         bool: 全て正常ならTrue、問題ありならFalse
     """
+    # stale watchdog は最初に実行する契約: 他チェックがハングしても水際で殺せる
     issues = (
-        _launchd_issues()
+        _stale_process_issues()
+        + _launchd_issues()
         + _docker_issues()
         + _log_issues()
         + _token_issues()
@@ -293,6 +319,7 @@ def run_health_check():
 
 def main():
     """メイン処理"""
+    install_deadline(DEADLINE_SECONDS, "health_monitor")
     logger.info("--- Starting Health Monitor ---")
 
     healthy = run_health_check()

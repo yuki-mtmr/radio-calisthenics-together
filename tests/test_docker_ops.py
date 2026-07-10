@@ -15,6 +15,7 @@ from rct.docker_ops import (
     DOCKER_BIN_CANDIDATES,
     docker_bin,
     is_docker_ready,
+    is_docker_ready_detailed,
     wait_for_docker,
 )
 
@@ -79,6 +80,76 @@ def test_not_ready_on_file_not_found():
         raise FileNotFoundError(cmd[0])
 
     assert is_docker_ready(bin_path="/fake/docker", check_call=fake_check_call) is False
+
+
+def test_not_ready_on_timeout():
+    """A1: subprocess.TimeoutExpired は False 扱い (ハング根絶)。"""
+    def fake_check_call(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    assert is_docker_ready(bin_path="/fake/docker", check_call=fake_check_call) is False
+
+
+def test_default_timeout_is_15_seconds_and_forwarded():
+    calls = []
+
+    def fake_check_call(cmd, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        return 0
+
+    is_docker_ready(bin_path="/fake/docker", check_call=fake_check_call)
+    assert calls == [15]
+
+
+def test_custom_timeout_is_forwarded():
+    calls = []
+
+    def fake_check_call(cmd, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        return 0
+
+    is_docker_ready(bin_path="/fake/docker", check_call=fake_check_call, timeout=5)
+    assert calls == [5]
+
+
+# ----------------------------------------------------- is_docker_ready_detailed
+
+def test_detailed_ready():
+    assert (
+        is_docker_ready_detailed(bin_path="/fake/docker", check_call=lambda cmd, **kw: 0)
+        == "ready"
+    )
+
+
+def test_detailed_error_on_called_process_error():
+    def fake_check_call(cmd, **kwargs):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    assert (
+        is_docker_ready_detailed(bin_path="/fake/docker", check_call=fake_check_call)
+        == "error"
+    )
+
+
+def test_detailed_error_on_file_not_found():
+    def fake_check_call(cmd, **kwargs):
+        raise FileNotFoundError(cmd[0])
+
+    assert (
+        is_docker_ready_detailed(bin_path="/fake/docker", check_call=fake_check_call)
+        == "error"
+    )
+
+
+def test_detailed_timeout():
+    """呼び出し側が timeout と error/成功を区別できることを担保する (wedge 検出の土台)。"""
+    def fake_check_call(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    assert (
+        is_docker_ready_detailed(bin_path="/fake/docker", check_call=fake_check_call)
+        == "timeout"
+    )
 
 
 # -------------------------------------------------------------- wait_for_docker

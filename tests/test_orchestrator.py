@@ -13,6 +13,22 @@ project_root = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(project_root, "scripts"))
 
 
+def test_main_installs_100_minute_deadline():
+    """A3/A5: 7/7 wedge インシデント対策 + 子 deadline 予算不足修正。100分でハングを強制終了する。"""
+    import orchestrator
+
+    with patch("orchestrator.install_deadline") as mock_install, \
+         patch("orchestrator.exclusive_run") as mock_lock, \
+         patch("orchestrator._run_full_flow"), \
+         patch("orchestrator.subprocess.Popen"):
+        mock_lock.return_value.__enter__.return_value = None
+        mock_lock.return_value.__exit__.return_value = False
+
+        orchestrator.main()
+
+        mock_install.assert_called_once_with(100 * 60, "orchestrator")
+
+
 def test_main_skips_when_already_running():
     """別 trigger が既に動いていれば exit 0 で skip"""
     from rct.lockfile import AlreadyRunning
@@ -146,26 +162,49 @@ def test_sleep_until_sleeps_for_positive_delta():
 def test_run_prepare_invokes_python_with_correct_script():
     import orchestrator
 
-    with patch("orchestrator.subprocess.run") as mock_run:
+    with patch("orchestrator.subprocess.Popen") as mock_popen, \
+         patch("orchestrator.register_child") as mock_register:
         orchestrator._run_prepare()
-        called = mock_run.call_args[0][0]
+        called = mock_popen.call_args[0][0]
         assert "prepare_environment.py" in called[-1]
+        mock_register.assert_called_once_with(mock_popen.return_value)
 
 
 def test_run_start_invokes_python_with_wrapper():
     import orchestrator
 
-    with patch("orchestrator.subprocess.run") as mock_run:
+    with patch("orchestrator.subprocess.Popen") as mock_popen, \
+         patch("orchestrator.register_child") as mock_register:
         orchestrator._run_start()
-        called = mock_run.call_args[0][0]
+        called = mock_popen.call_args[0][0]
         assert "start_stream_wrapper.py" in called[-1]
+        mock_register.assert_called_once_with(mock_popen.return_value)
 
 
 def test_run_stop_invokes_stop_wrapper():
     """orchestrator は stop_stream_wrapper.py 経由で stop を呼ぶ (lock 統合)"""
     import orchestrator
 
-    with patch("orchestrator.subprocess.run") as mock_run:
+    with patch("orchestrator.subprocess.Popen") as mock_popen, \
+         patch("orchestrator.register_child") as mock_register:
         orchestrator._run_stop()
-        called = mock_run.call_args[0][0]
+        called = mock_popen.call_args[0][0]
         assert "stop_stream_wrapper.py" in called[-1]
+        mock_register.assert_called_once_with(mock_popen.return_value)
+
+
+def test_run_subprocess_uses_start_new_session_and_waits():
+    """HIGH: deadline 発火時に子プロセスグループごと killpg できるよう、
+    start_new_session=True で起動し register_child に登録、wait() で完了を待つ。
+    """
+    import orchestrator
+
+    with patch("orchestrator.subprocess.Popen") as mock_popen, \
+         patch("orchestrator.register_child") as mock_register:
+        mock_popen.return_value.wait.return_value = 0
+
+        orchestrator._run_subprocess(["python3", "foo.py"])
+
+        assert mock_popen.call_args[1].get("start_new_session") is True
+        mock_register.assert_called_once_with(mock_popen.return_value)
+        mock_popen.return_value.wait.assert_called_once()
