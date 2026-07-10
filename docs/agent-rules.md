@@ -8,3 +8,6 @@
 ## ルール一覧
 
 - RULE: git・シェル操作は対象リポジトリを `git -C <絶対パス>` 等で毎回明示する。永続シェルの CWD に依存すると隣接リポジトリへの誤操作になる（2026-06-12: studio 側に player の remote を誤追加し誤 push 未遂、non-FF 拒否で実害なし）
+- RULE: 外部プロセス・デーモンを待つ subprocess 呼び出しには必ず timeout を付け、常駐し得るエントリポイントには全体 deadline を置く。無限待ちは lock を握ったまま以降の全自動実行とリカバリを殺し、アラートも飛ばない（2026-07-07: docker info ハングで 4 日配信停止）
+- RULE: プロセス名によるマッチング（ps の command 文字列など）は裸の部分一致にせず、トークン単位で「実行体（python 等）+ 対象パス」の組み合わせを要求する。裸の部分一致は `less scripts/foo.py` や `grep foo.py` のような無関係プロセスまで誤検出・誤 kill する（2026-07-10: watchdog レビューで検出）
+- RULE: SIGALRM 等プロセス内 deadline は自プロセスしか止められない。docker compose run 等の子プロセスを起動するエントリポイントでは start_new_session=True で子に独立 pgid を持たせ、deadline ハンドラから killpg で子ごと道連れにする設計にする（2026-07-10: deadline がハングした docker compose run を放置する穴をレビューで検出）

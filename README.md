@@ -2,6 +2,14 @@
 
 毎朝のラジオ体操をYouTube Liveで自動配信するためのプロジェクトです。
 
+## リポジトリ構成（役割分担）
+
+このプロジェクトは3つのリポジトリで構成される:
+
+- **radio-calisthenics-together (本リポジトリ)** = 配信 player 専任。OBS/YouTube live 制御・launchd スケジュールを担当。
+- **radio-calisthenics-studio** = 動画生成専任。`studio publish` が生成物を本リポジトリの `videos/` へ配置する唯一の接点。レンダ/アップスケール手順は studio 側 `.claude/skills/radio-video-render/SKILL.md` を参照。
+- **youtube-autopost** = YouTube API 基盤ライブラリ。`vendor/` に wheel として取り込み、更新は `scripts/update_vendor.sh` で行う。
+
 ## Phase 1 機能
 - 指定時刻にOBSを自動起動し、配信を開始。
 - 指定時間経過後に配信を自動停止。
@@ -18,6 +26,10 @@
 2. **依存関係のインストール**:
    ```bash
    pip install -r requirements.txt
+   ```
+   `.venv` を再構築した場合は、`youtube-autopost` の vendor wheel も入れ直す必要がある:
+   ```bash
+   pip install vendor/youtube_autopost-*.whl
    ```
 
 3. **設定の作成**:

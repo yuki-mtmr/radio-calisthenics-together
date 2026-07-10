@@ -113,6 +113,17 @@ docker compose run --rm rct python scripts/bird_director.py \
   --duration 30 --interval 5 --probability 0.5
 ```
 
+## 役割分担 / テスト
+
+- このリポジトリは **player (配信)** 専任。動画の生成・レンダ・アップスケールは
+  隣の `radio-calisthenics-studio` の責務（`studio publish` が `videos/` へ配置する唯一の接点）。
+  レンダ手順は studio 側 `.claude/skills/radio-video-render/SKILL.md` を参照。
+- YouTube API 基盤は `youtube-autopost` リポジトリのライブラリを `vendor/` に wheel として取り込んで利用する。
+  更新は `scripts/update_vendor.sh` 経由で行い、直接 `vendor/` を手編集しない。
+- `videos/` 内のファイルは配信ソース。手で編集・削除しない（studio publish 経由のみ）。
+- テスト: `./scripts/run_tests.sh`（Docker 内 pytest）、ローカルは `./.venv/bin/python -m pytest tests/`。
+- 頭切れの実機ドライラン（配信されない）: `./.venv/bin/python scripts/_check_media_head.py`
+
 ## ループ規約 (agent loop)
 
 実装タスクは「実装 → verifier 検証 → PASS まで修正」のループで進める。
