@@ -388,6 +388,34 @@ class TestDockerWedgeRecovery:
             assert mock_notify.call_args[0][0] == "Docker起動失敗"
 
 
+class TestDockerWaitWallClockBound:
+    """7/17 インシデント: wedge 中の docker info timeout (15s/回) により
+    wait_for_docker が回数上限だけでは 1530s かかり、deadline (1200s) が
+    wedge 復旧より先に発火した。壁時計上限 180s を必ず渡す契約。"""
+
+    def test_wait_for_docker_passes_wall_clock_budget(self):
+        with patch('prepare_environment._docker_ops_wait', return_value=True) as mock_wait:
+            import prepare_environment
+            assert prepare_environment.wait_for_docker() is True
+            assert mock_wait.call_args.kwargs['max_total_seconds'] == \
+                prepare_environment.DOCKER_WAIT_MAX_SECONDS == 180
+
+    def test_wedge_wait_ready_passes_wall_clock_budget(self):
+        captured = {}
+
+        def fake_check(**kwargs):
+            captured.update(kwargs)
+            return 'not_wedged'
+
+        with patch('prepare_environment.docker_recovery.check_wedge_and_recover',
+                   side_effect=fake_check), \
+             patch('prepare_environment._docker_ops_wait', return_value=True) as mock_wait:
+            import prepare_environment
+            prepare_environment._attempt_wedge_recovery()
+            captured['wait_ready']()
+            assert mock_wait.call_args.kwargs['max_total_seconds'] == 180
+
+
 class TestMain:
     """main 関数のテスト"""
 

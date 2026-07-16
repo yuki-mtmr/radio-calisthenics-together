@@ -187,3 +187,40 @@ def test_wait_timeout_matches_legacy_timing():
         is False
     )
     assert sleep.calls == [2, 2, 2, 2, 2]
+
+
+def test_wait_stops_when_wall_clock_budget_exceeded():
+    """7/17 インシデント対策: wedge 中は 1 チェックが 15s timeout を消費するため、
+    回数上限 (90回) だけでは 1530s かかり deadline (1200s) を先に踏む。
+    max_total_seconds を渡すと壁時計時間で打ち切る。"""
+    sleep = _Recorder()
+    clock = {"t": 0.0}
+
+    def slow_not_ready():
+        clock["t"] += 17.0  # docker info timeout 15s + interval 2s 相当
+        return False
+
+    result = wait_for_docker(
+        retries=90,
+        interval=2,
+        is_ready=slow_not_ready,
+        sleep=sleep,
+        max_total_seconds=180,
+        monotonic=lambda: clock["t"],
+    )
+    assert result is False
+    # 180s 到達で打ち切り (17s/チェック → 11 回目で 187s >= 180)
+    assert len(sleep.calls) <= 11
+
+
+def test_wait_budget_none_keeps_legacy_behavior():
+    """max_total_seconds 未指定なら従来どおり retries 回数で制御。"""
+    sleep = _Recorder()
+    assert (
+        wait_for_docker(
+            retries=5, interval=2, is_ready=lambda: False, sleep=sleep,
+            monotonic=lambda: 0.0,
+        )
+        is False
+    )
+    assert sleep.calls == [2, 2, 2, 2, 2]

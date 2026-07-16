@@ -40,7 +40,10 @@ RETRY_INTERVALS = [10, 20, 30]
 # Docker待機設定
 DOCKER_WAIT_RETRIES = 90  # リトライ回数
 DOCKER_WAIT_INTERVAL = 2  # 各リトライ間隔（秒）
-# 合計タイムアウト: 90回 × 2秒 = 180秒（3分）
+# 壁時計上限。wedge 中は 1 チェックが docker info timeout (15s) を消費するため、
+# 回数上限だけでは 90×17s=1530s に膨張し deadline (1200s) が wedge 復旧より
+# 先に発火する (2026-07-17 インシデント)。時間でも必ず打ち切る。
+DOCKER_WAIT_MAX_SECONDS = 180
 
 # Docker CLI のフルパス候補。launchd 環境下では PATH に Docker のbinが入って
 # いない場合があるため絶対パスでフォールバック。
@@ -112,7 +115,11 @@ def wait_for_docker():
     """
     log("Waiting for Docker to be ready...")
     # ループは docker_ops に委譲。ログ文字列はここに残す (health_monitor.FAILURE_PATTERNS 契約)
-    if _docker_ops_wait(retries=DOCKER_WAIT_RETRIES, interval=DOCKER_WAIT_INTERVAL):
+    if _docker_ops_wait(
+        retries=DOCKER_WAIT_RETRIES,
+        interval=DOCKER_WAIT_INTERVAL,
+        max_total_seconds=DOCKER_WAIT_MAX_SECONDS,
+    ):
         log("Docker is ready.")
         return True
     log("Timed out waiting for Docker.")
@@ -134,7 +141,12 @@ def _attempt_wedge_recovery():
         return _docker_ops_is_ready_detailed(bin_path=bin_path)
 
     def _wait_ready():
-        return _docker_ops_wait(retries=DOCKER_WAIT_RETRIES, interval=DOCKER_WAIT_INTERVAL, bin_path=bin_path)
+        return _docker_ops_wait(
+            retries=DOCKER_WAIT_RETRIES,
+            interval=DOCKER_WAIT_INTERVAL,
+            bin_path=bin_path,
+            max_total_seconds=DOCKER_WAIT_MAX_SECONDS,
+        )
 
     result = docker_recovery.check_wedge_and_recover(
         is_ready_detailed=_is_ready_detailed,

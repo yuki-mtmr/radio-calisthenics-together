@@ -86,6 +86,8 @@ def wait_for_docker(
     is_ready: Optional[Callable[[], bool]] = None,
     sleep: Optional[Callable[[float], None]] = None,
     bin_path: Optional[str] = None,
+    max_total_seconds: Optional[float] = None,
+    monotonic: Optional[Callable[[], float]] = None,
 ) -> bool:
     """is_ready が True を返すまで retries 回ポーリングする。
 
@@ -93,10 +95,16 @@ def wait_for_docker(
     - 即成功 → sleep なし
     - 失敗ごとに sleep (最終チェック失敗後も sleep)
 
+    max_total_seconds は壁時計時間の上限。wedge 中は is_ready 1 回が
+    subprocess timeout (15s) を消費するため、回数上限だけでは
+    retries × (timeout + interval) まで膨張し deadline を先に踏む
+    (2026-07-17 インシデント)。上限超過時は残り回数を捨てて False を返す。
+
     is_ready 省略時は is_docker_ready(docker_bin()) を使う。
-    sleep 省略時は time.sleep を使う。
+    sleep 省略時は time.sleep、monotonic 省略時は time.monotonic を使う。
     """
     _sleep = sleep if sleep is not None else time.sleep
+    _monotonic = monotonic if monotonic is not None else time.monotonic
 
     if is_ready is None:
         _bin = bin_path if bin_path is not None else docker_bin()
@@ -104,9 +112,15 @@ def wait_for_docker(
     else:
         _is_ready = is_ready
 
+    start = _monotonic()
     for _ in range(retries):
         if _is_ready():
             return True
+        if (
+            max_total_seconds is not None
+            and _monotonic() - start >= max_total_seconds
+        ):
+            return False
         _sleep(interval)
 
     return False
