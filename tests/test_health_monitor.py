@@ -34,6 +34,10 @@ def _mock_stale_watchdog(request):
         yield
 
 
+from rct.disk import OK_LEVEL, DiskStatus
+_DISK_OK = DiskStatus(OK_LEVEL, 100.0, "空き 100.0GB (ok)")
+
+
 class TestCheckLaunchdTasks:
     """check_launchd_tasks 関数のテスト"""
 
@@ -301,6 +305,7 @@ class TestRunHealthCheck:
     def test_all_healthy_no_notification(self):
         """全て正常な場合、通知を送信しないことをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_launchd, \
@@ -319,6 +324,7 @@ class TestRunHealthCheck:
     def test_missing_launchd_sends_notification(self):
         """launchdタスクが未ロードで自動修復も失敗した場合、通知を送信することをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_launchd, \
@@ -341,6 +347,7 @@ class TestRunHealthCheck:
     def test_docker_not_running_sends_notification(self):
         """Dockerが起動していない場合、通知を送信することをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_launchd:
@@ -360,6 +367,7 @@ class TestRunHealthCheck:
     def test_youtube_token_invalid_sends_notification(self):
         """YouTube tokenが無効な場合、通知を送信する。"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_launchd, \
@@ -380,6 +388,7 @@ class TestRunHealthCheck:
     def test_log_failures_sends_notification(self):
         """ログに失敗パターンがある場合、通知を送信することをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_launchd:
@@ -396,6 +405,7 @@ class TestRunHealthCheck:
     def test_multiple_issues_single_notification(self):
         """複数の問題がある場合、1つの通知にまとめることをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_launchd, \
@@ -527,6 +537,7 @@ class TestRunHealthCheckWithAutoFix:
     def test_auto_fix_before_notification(self):
         """通知前に自動修復を試みることをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_check, \
@@ -547,6 +558,7 @@ class TestRunHealthCheckWithAutoFix:
     def test_no_notification_if_auto_fix_succeeds(self):
         """自動修復が成功した場合、通知しないことをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_check, \
@@ -569,6 +581,7 @@ class TestRunHealthCheckWithAutoFix:
     def test_notification_if_auto_fix_fails(self):
         """自動修復が失敗した場合、通知することをテスト"""
         with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_free_space', return_value=_DISK_OK), \
              patch('health_monitor.check_yesterday_logs') as mock_logs, \
              patch('health_monitor.check_docker_status') as mock_docker, \
              patch('health_monitor.check_launchd_tasks') as mock_check, \
@@ -585,3 +598,77 @@ class TestRunHealthCheckWithAutoFix:
             # 通知が送信される（自動修復失敗）
             mock_notify.assert_called_once()
             assert result is False
+
+
+# ---------------------------------------- ディスク容量ガード (2026-08-06 ENOSPC 事故)
+
+
+class TestDiskSpaceCheck:
+    """2026-08-06: ディスク満杯で token.json が書けず配信が全滅した回帰テスト。
+
+    当時 health_monitor は ENOSPC を「YouTubeClient 初期化失敗」としてしか
+    見えず、原因がディスクだと分からなかった。空き容量を独立した検査項目に
+    昇格させる。
+    """
+
+    def test_critical_disk_space_is_reported_as_issue(self):
+        from rct.disk import CRITICAL_LEVEL, DiskStatus
+
+        with patch('health_monitor.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(
+                CRITICAL_LEVEL, 0.3, "空き 0.3GB (critical)"
+            )
+            import health_monitor
+            issues = health_monitor._disk_issues()
+
+            assert len(issues) == 1
+            assert "0.3GB" in issues[0]
+
+    def test_warn_disk_space_is_reported_as_issue(self):
+        from rct.disk import WARN_LEVEL, DiskStatus
+
+        with patch('health_monitor.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(WARN_LEVEL, 12.0, "空き 12.0GB (warn)")
+            import health_monitor
+            assert len(health_monitor._disk_issues()) == 1
+
+    def test_ok_disk_space_reports_no_issue(self):
+        from rct.disk import OK_LEVEL, DiskStatus
+
+        with patch('health_monitor.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(OK_LEVEL, 103.0, "空き 103.0GB")
+            import health_monitor
+            assert health_monitor._disk_issues() == []
+
+    def test_free_space_is_always_logged_even_when_ok(self):
+        """推移追跡のため、正常時も毎回 INFO ログに残す契約。"""
+        from rct.disk import OK_LEVEL, DiskStatus
+
+        with patch('health_monitor.check_free_space') as mock_disk, \
+             patch('health_monitor.logger') as mock_logger:
+            mock_disk.return_value = DiskStatus(OK_LEVEL, 103.0, "空き 103.0GB")
+            import health_monitor
+            health_monitor._disk_issues()
+
+            logged = " ".join(str(c) for c in mock_logger.info.call_args_list)
+            assert "103.0" in logged
+
+    def test_run_health_check_fails_when_disk_is_critical(self):
+        """ディスク critical 単独で health check が落ちること (他は全て正常)。"""
+        from rct.disk import CRITICAL_LEVEL, DiskStatus
+
+        with patch('health_monitor.send_alert_email') as mock_notify, \
+             patch('health_monitor.check_yesterday_logs', return_value=[]), \
+             patch('health_monitor.check_docker_status', return_value=True), \
+             patch('health_monitor.check_launchd_tasks', return_value=[]), \
+             patch('health_monitor.check_youtube_token', return_value=None), \
+             patch('health_monitor.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(
+                CRITICAL_LEVEL, 0.0, "空き 0.0GB (critical)"
+            )
+
+            import health_monitor
+            result = health_monitor.run_health_check()
+
+            assert result is False
+            mock_notify.assert_called_once()

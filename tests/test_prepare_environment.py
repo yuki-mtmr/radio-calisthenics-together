@@ -15,6 +15,10 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 sys.path.insert(0, os.path.join(project_root, 'scripts'))
 
 
+from rct.disk import OK_LEVEL, DiskStatus
+_DISK_OK = DiskStatus(OK_LEVEL, 100.0, "空き 100.0GB (ok)")
+
+
 class TestIsAppRunning:
     """is_app_running 関数のテスト"""
 
@@ -422,6 +426,7 @@ class TestMain:
     def test_main_exits_on_docker_failure(self):
         """Docker起動失敗時にsys.exit(1)で終了することをテスト"""
         with patch('prepare_environment.sys.exit') as mock_exit, \
+             patch('prepare_environment.check_free_space', return_value=_DISK_OK), \
              patch('prepare_environment.start_docker_with_retry', return_value=False), \
              patch('prepare_environment.ensure_obs_running') as mock_ensure_obs:
             import prepare_environment
@@ -431,6 +436,7 @@ class TestMain:
     def test_main_continues_when_docker_succeeds(self):
         """Docker起動成功時にOBS起動処理 (ensure_obs_running) に進むことをテスト"""
         with patch('prepare_environment.sys.exit') as mock_exit, \
+             patch('prepare_environment.check_free_space', return_value=_DISK_OK), \
              patch('prepare_environment.start_docker_with_retry', return_value=True), \
              patch('prepare_environment.ensure_obs_running') as mock_ensure_obs:
             import prepare_environment
@@ -562,3 +568,69 @@ class TestExclusiveRunGuard:
             prepare_environment.main()
 
             mock_run.assert_called_once()
+
+
+class TestDiskSpacePreflight:
+    """2026-08-06 ENOSPC 事故: 検知しても止めなかったことの直接の修正。
+
+    health_monitor は 06:45 にディスク満杯を検知したがアラートのみで、
+    その後 start/verify/stop が全滅した。prepare は Docker 起動より前に
+    空き容量を見て、critical なら中断する。
+    """
+
+    def test_aborts_before_docker_when_disk_is_critical(self):
+        from rct.disk import CRITICAL_LEVEL, DiskStatus
+
+        with patch('prepare_environment.sys.exit', side_effect=SystemExit) as mock_exit, \
+             patch('prepare_environment.send_alert_email') as mock_alert, \
+             patch('prepare_environment.start_docker_with_retry') as mock_docker, \
+             patch('prepare_environment.ensure_obs_running') as mock_obs, \
+             patch('prepare_environment.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(
+                CRITICAL_LEVEL, 0.2, "空き 0.2GB (critical)"
+            )
+
+            import prepare_environment
+            with pytest.raises(SystemExit):
+                prepare_environment.main()
+
+            mock_exit.assert_called_once_with(1)
+            mock_docker.assert_not_called()
+            mock_obs.assert_not_called()
+            mock_alert.assert_called_once()
+
+    def test_warn_level_does_not_abort(self):
+        """warn では配信を落とさない (誤爆で自動配信を殺さない)。"""
+        from rct.disk import WARN_LEVEL, DiskStatus
+
+        with patch('prepare_environment.sys.exit') as mock_exit, \
+             patch('prepare_environment.check_free_space', return_value=_DISK_OK), \
+             patch('prepare_environment.send_alert_email'), \
+             patch('prepare_environment.start_docker_with_retry', return_value=True) as mock_docker, \
+             patch('prepare_environment.ensure_obs_running') as mock_obs, \
+             patch('prepare_environment.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(WARN_LEVEL, 12.0, "空き 12.0GB (warn)")
+
+            import prepare_environment
+            prepare_environment.main()
+
+            mock_exit.assert_not_called()
+            mock_docker.assert_called_once()
+            mock_obs.assert_called_once()
+
+    def test_ok_level_proceeds_without_alert(self):
+        from rct.disk import OK_LEVEL, DiskStatus
+
+        with patch('prepare_environment.sys.exit') as mock_exit, \
+             patch('prepare_environment.check_free_space', return_value=_DISK_OK), \
+             patch('prepare_environment.send_alert_email') as mock_alert, \
+             patch('prepare_environment.start_docker_with_retry', return_value=True), \
+             patch('prepare_environment.ensure_obs_running'), \
+             patch('prepare_environment.check_free_space') as mock_disk:
+            mock_disk.return_value = DiskStatus(OK_LEVEL, 103.0, "空き 103.0GB")
+
+            import prepare_environment
+            prepare_environment.main()
+
+            mock_exit.assert_not_called()
+            mock_alert.assert_not_called()

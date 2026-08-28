@@ -67,9 +67,9 @@ def _run_subprocess(args: list) -> int:
     return proc.wait()
 
 
-def _run_prepare() -> None:
+def _run_prepare() -> int:
     logger.info("orchestrator: running prepare_environment.py")
-    _run_subprocess([PYTHON_BIN, PREPARE_SCRIPT])
+    return _run_subprocess([PYTHON_BIN, PREPARE_SCRIPT])
 
 
 def _run_start() -> None:
@@ -83,7 +83,15 @@ def _run_stop() -> None:
 
 
 def _run_full_flow() -> None:
-    _run_prepare()
+    rc = _run_prepare()
+    if rc != 0:
+        # prepare はディスク critical 等で exit 1 する (水際ガード)。ここで止めないと
+        # 壊れた環境のまま start/stop が走り、翌日枠の予約まで失う (2026-08-06)。
+        logger.error(
+            "orchestrator: prepare_environment.py failed (rc=%s); "
+            "aborting start/stop for today.", rc
+        )
+        return
     _sleep_until(_today_at(STREAM_START_HOUR, STREAM_START_MINUTE))
     _run_start()
     _sleep_until(_today_at(STREAM_STOP_HOUR, STREAM_STOP_MINUTE))

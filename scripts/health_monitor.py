@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.join(project_root, 'src'))
 
 from rct.notify import send_alert_email
 from rct.logger import setup_logger
+from rct.disk import check_free_space
+from rct.settings import settings
 from rct.youtube import make_youtube_client as YouTubeClient
 from rct.docker_ops import DOCKER_BIN_CANDIDATES, docker_bin as _docker_bin, is_docker_ready
 from rct.deadline import install_deadline
@@ -279,6 +281,24 @@ def _log_issues():
     return []
 
 
+def _disk_issues():
+    """ディスク空き容量確認。問題文リストを返す。
+
+    2026-08-06 インシデント: ディスク満杯が「YouTubeClient 初期化失敗」としか
+    見えず原因特定が遅れた。空き容量は常に INFO ログへ残し、推移を追えるようにする。
+    """
+    status = check_free_space(
+        project_root,
+        critical_gb=settings.DISK_FREE_CRITICAL_GB,
+        warn_gb=settings.DISK_FREE_WARN_GB,
+    )
+    logger.info(f"Disk free: {status.free_gb:.1f}GB (level={status.level})")
+
+    if status.is_ok:
+        return []
+    return [status.message]
+
+
 def _token_issues():
     """YouTube トークン検証。問題文リストを返す。"""
     issue = check_youtube_token()
@@ -295,6 +315,7 @@ def run_health_check():
     # stale watchdog は最初に実行する契約: 他チェックがハングしても水際で殺せる
     issues = (
         _stale_process_issues()
+        + _disk_issues()
         + _launchd_issues()
         + _docker_issues()
         + _log_issues()

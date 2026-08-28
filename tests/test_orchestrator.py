@@ -108,7 +108,7 @@ def test_full_flow_runs_prepare_then_start_then_stop_in_order():
     def record_stop():
         call_order.append("stop")
 
-    with patch("orchestrator._run_prepare", side_effect=record_prepare), \
+    with patch("orchestrator._run_prepare", side_effect=lambda: (record_prepare(), 0)[1]), \
          patch("orchestrator._run_start", side_effect=record_start), \
          patch("orchestrator._run_stop", side_effect=record_stop), \
          patch("orchestrator._sleep_until"):
@@ -126,7 +126,7 @@ def test_full_flow_sleeps_until_correct_target_times():
     def record_sleep(target_dt):
         sleep_targets.append((target_dt.hour, target_dt.minute))
 
-    with patch("orchestrator._run_prepare"), \
+    with patch("orchestrator._run_prepare", return_value=0), \
          patch("orchestrator._run_start"), \
          patch("orchestrator._run_stop"), \
          patch("orchestrator._sleep_until", side_effect=record_sleep):
@@ -208,3 +208,30 @@ def test_run_subprocess_uses_start_new_session_and_waits():
         assert mock_popen.call_args[1].get("start_new_session") is True
         mock_register.assert_called_once_with(mock_popen.return_value)
         mock_popen.return_value.wait.assert_called_once()
+
+
+def test_full_flow_aborts_when_prepare_fails():
+    """prepare が非ゼロ終了 (例: ディスク critical) なら start/stop を実行しない。
+
+    2026-08-27/28: prepare がディスク不足で exit 1 しても orchestrator が
+    戻り値を捨てて start に進んでいた (前日から Docker が生きていたので
+    偶然成功)。水際ガードを orchestrator まで貫通させる。
+    """
+    import orchestrator
+
+    with patch("orchestrator._run_prepare", return_value=1), \
+         patch("orchestrator._run_start") as mock_start, \
+         patch("orchestrator._run_stop") as mock_stop, \
+         patch("orchestrator._sleep_until") as mock_sleep:
+        orchestrator._run_full_flow()
+
+    mock_start.assert_not_called()
+    mock_stop.assert_not_called()
+    mock_sleep.assert_not_called()
+
+
+def test_run_prepare_returns_child_exit_code():
+    import orchestrator
+
+    with patch("orchestrator._run_subprocess", return_value=1):
+        assert orchestrator._run_prepare() == 1

@@ -18,6 +18,8 @@ sys.path.insert(0, project_root)
 sys.path.insert(0, os.path.join(project_root, 'src'))
 
 from rct.notify import send_alert_email
+from rct.disk import check_free_space
+from rct.settings import settings
 from rct.lockfile import AlreadyRunning, exclusive_run
 from rct.docker_ops import DOCKER_BIN_CANDIDATES as _DOCKER_BIN_CANDIDATES, docker_bin as _docker_bin_impl
 from rct.docker_ops import wait_for_docker as _docker_ops_wait
@@ -263,9 +265,42 @@ def ensure_obs_running():
     log(f"WARNING: OBS WebSocket not responsive after {OBS_WS_WAIT_RETRIES * OBS_WS_WAIT_INTERVAL}s.")
 
 
+def check_disk_space():
+    """ディスク空き容量の preflight。critical なら通知して中断する。
+
+    2026-08-06 インシデント: ディスク満杯で token.json が書けず、start/verify/stop
+    が全滅した。health_monitor は検知していたが止めなかったため、壊れた状態のまま
+    配信フローが最後まで走り、翌日枠の予約まで失われた。ここで水際で止める。
+    warn 段階では中断しない (誤爆で自動配信を殺さないため)。
+    """
+    status = check_free_space(
+        project_root,
+        critical_gb=settings.DISK_FREE_CRITICAL_GB,
+        warn_gb=settings.DISK_FREE_WARN_GB,
+    )
+    log(f"Disk free: {status.free_gb:.1f}GB (level={status.level})")
+
+    if status.is_critical:
+        log(f"ERROR: {status.message}")
+        send_alert_email(
+            "ディスク容量不足で配信準備を中断",
+            f"{status.message}\n\n"
+            "空き容量が不足しているため、配信準備を中断しました。\n"
+            "不要なファイルを削除してください。\n\n"
+            f"時刻: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        sys.exit(1)
+
+    if not status.is_ok:
+        log(f"WARNING: {status.message}")
+
+
 def _run_preparation():
     """環境準備の実体 (lock 取得済み前提)"""
     log("--- Checking Environment Pre-flight ---")
+
+    # 0. ディスク空き容量 (2026-08-06 ENOSPC 事故対応): Docker より前に見る
+    check_disk_space()
 
     # 1. Docker起動（リトライ付き）
     if not start_docker_with_retry():

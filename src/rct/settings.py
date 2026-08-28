@@ -36,6 +36,11 @@ class Settings:
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
 
+    # ディスク空き容量ガード (2026-08-06 ENOSPC 事故由来)
+    # CRITICAL 未満: 配信前に中断 / WARN 未満: 通知するが続行
+    DISK_FREE_CRITICAL_GB: int = 5
+    DISK_FREE_WARN_GB: int = 20
+
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """環境変数 (デフォルト os.environ) から Settings を生成する。"""
@@ -69,6 +74,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ALERT_EMAIL_RECEIVER=_str("ALERT_EMAIL_RECEIVER", ""),
         SMTP_HOST=_str("SMTP_HOST", "smtp.gmail.com"),
         SMTP_PORT=_int("SMTP_PORT", 587),
+        DISK_FREE_CRITICAL_GB=_int("DISK_FREE_CRITICAL_GB", 5),
+        DISK_FREE_WARN_GB=_int("DISK_FREE_WARN_GB", 20),
     )
 
 
